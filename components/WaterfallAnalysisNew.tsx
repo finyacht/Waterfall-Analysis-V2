@@ -6,9 +6,7 @@ import { Card, CardContent } from "./ui/card";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
-import { Select, SelectTrigger, SelectContent, SelectItem, SelectValue } from "./ui/select";
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ReferenceLine, Cell, LineChart, Line, ReferenceDot } from "recharts";
-import { Plus } from "lucide-react";
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ReferenceLine, Cell, LineChart, Line } from "recharts";
 
 export interface ShareClass {
   id: number;
@@ -25,25 +23,6 @@ export interface Transaction {
   shares: number;
   investment: number;
 }
-
-interface Component {
-  type: string;
-  amount: number;
-}
-
-interface ReturnData {
-  total: number;
-  components: Component[];
-}
-
-interface Returns {
-  [key: string]: ReturnData;
-}
-
-type SummaryData = {
-  name: string;
-  [key: string]: string | number;
-};
 
 interface WaterfallStepData {
   name: string;
@@ -304,7 +283,7 @@ export default function WaterfallAnalysisNew() {
               <select
                 value={sc.prefType}
                 onChange={(e) => updateShareClass(sc.id, 'prefType', e.target.value as "non-participating" | "participating")}
-                className="w-full"
+                className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-1 focus:ring-ring"
               >
                 <option value="non-participating">Non-Participating</option>
                 <option value="participating">Participating</option>
@@ -343,7 +322,7 @@ export default function WaterfallAnalysisNew() {
               <select
                 value={tx.shareClassId}
                 onChange={(e) => updateTransaction(tx.id, 'shareClassId', parseInt(e.target.value))}
-                className="w-full"
+                className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-1 focus:ring-ring"
               >
                 {shareClasses.map((sc) => (
                   <option key={sc.id} value={sc.id}>{sc.name}</option>
