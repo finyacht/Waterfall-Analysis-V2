@@ -78,7 +78,7 @@ export default function WaterfallAnalysisNew() {
     }]);
   };
 
-  const updateShareClass = (id: number, field: keyof ShareClass, value: any) => {
+  const updateShareClass = (id: number, field: keyof ShareClass, value: ShareClass[keyof ShareClass]) => {
     setShareClasses(shareClasses.map(sc => {
       if (sc.id === id) {
         return { ...sc, [field]: value };
@@ -87,7 +87,7 @@ export default function WaterfallAnalysisNew() {
     }));
   };
 
-  const updateTransaction = (id: number, field: keyof Transaction, value: any) => {
+  const updateTransaction = (id: number, field: keyof Transaction, value: Transaction[keyof Transaction]) => {
     setTransactions(transactions.map(tx => {
       if (tx.id === id) {
         return { ...tx, [field]: value };
