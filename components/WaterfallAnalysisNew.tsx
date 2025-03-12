@@ -1,10 +1,11 @@
 'use client';
 
 // Force rebuild - remove old cached files
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from "recharts";
+import { LineChart, Line, ReferenceLine } from "recharts";
 
 export interface ShareClass {
   id: number;
@@ -41,12 +42,18 @@ interface ReturnDataPoint {
   value: number;
 }
 
+interface SensitivityDataPoint {
+  exitValue: number;
+  [key: string]: number;
+}
+
 export default function WaterfallAnalysisNew() {
   const [shareClasses, setShareClasses] = useState<ShareClass[]>([]);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [exitAmount, setExitAmount] = useState<number>(10000000);
   const [waterfallData, setWaterfallData] = useState<WaterfallDataPoint[]>([]);
   const [returnData, setReturnData] = useState<ReturnDataPoint[]>([]);
+  const [sensitivityData, setSensitivityData] = useState<SensitivityDataPoint[]>([]);
 
   const formatNumber = (num: number): string => {
     return new Intl.NumberFormat('en-US').format(num);
@@ -81,6 +88,9 @@ export default function WaterfallAnalysisNew() {
   const updateShareClass = (id: number, field: keyof ShareClass, value: ShareClass[keyof ShareClass]) => {
     setShareClasses(shareClasses.map(sc => {
       if (sc.id === id) {
+        if (field === 'prefType' && sc.prefType === 'participating' && value === 'non-participating') {
+          return sc;
+        }
         return { ...sc, [field]: value };
       }
       return sc;
@@ -105,92 +115,94 @@ export default function WaterfallAnalysisNew() {
     setTransactions(transactions.filter(tx => tx.id !== id));
   };
 
-  const calculateWaterfallData = (): WaterfallStepData[] => {
-    const data: WaterfallStepData[] = [];
-    let remainingAmount = exitAmount;
-    let currentStep = 0;
+  useEffect(() => {
+    if (shareClasses.length === 0 || transactions.length === 0) return;
 
-    // Sort share classes by seniority
-    const sortedShareClasses = [...shareClasses].sort((a, b) => a.seniority - b.seniority);
+    const calculateWaterfallData = () => {
+      const data: WaterfallStepData[] = [];
+      let remainingAmount = exitAmount;
+      let currentStep = 0;
 
-    // Calculate liquidation preferences
-    for (const sc of sortedShareClasses) {
-      const tx = transactions.find(t => t.shareClassId === sc.id);
-      if (!tx) continue;
+      // Sort share classes by seniority
+      const sortedShareClasses = [...shareClasses].sort((a, b) => a.seniority - b.seniority);
 
-      const liquidationPref = tx.investment * sc.liquidationPref;
-      if (remainingAmount >= liquidationPref) {
-        data.push({
-          name: `${sc.name} Liquidation`,
-          start: currentStep,
-          end: currentStep + liquidationPref,
-          amount: liquidationPref,
-          type: 'liquidation'
-        });
-        remainingAmount -= liquidationPref;
-        currentStep += liquidationPref;
-      } else {
-        data.push({
-          name: `${sc.name} Liquidation`,
-          start: currentStep,
-          end: currentStep + remainingAmount,
-          amount: remainingAmount,
-          type: 'liquidation'
-        });
-        remainingAmount = 0;
-        break;
-      }
-    }
-
-    // Calculate participation
-    if (remainingAmount > 0) {
-      const participatingClasses = sortedShareClasses.filter(sc => 
-        sc.prefType === "participating" || 
-        (sc.prefType === "non-participating" && sc.cap !== null)
-      );
-
-      const totalShares = transactions.reduce((sum, tx) => {
-        const sc = shareClasses.find(s => s.id === tx.shareClassId);
-        return sc?.prefType === "participating" ? sum + tx.shares : sum;
-      }, 0);
-
-      for (const sc of participatingClasses) {
+      // Calculate liquidation preferences
+      for (const sc of sortedShareClasses) {
         const tx = transactions.find(t => t.shareClassId === sc.id);
         if (!tx) continue;
 
-        const participation = (tx.shares / totalShares) * remainingAmount;
-        const maxParticipation = sc.cap ? tx.investment * (sc.cap - 1) : participation;
-        const actualParticipation = Math.min(participation, maxParticipation);
-
-        if (actualParticipation > 0) {
+        const liquidationPref = tx.investment * sc.liquidationPref;
+        if (remainingAmount >= liquidationPref) {
           data.push({
-            name: `${sc.name} Participation`,
+            name: `${sc.name} Liquidation`,
             start: currentStep,
-            end: currentStep + actualParticipation,
-            amount: actualParticipation,
-            type: 'participation'
+            end: currentStep + liquidationPref,
+            amount: liquidationPref,
+            type: 'liquidation'
           });
-          remainingAmount -= actualParticipation;
-          currentStep += actualParticipation;
+          remainingAmount -= liquidationPref;
+          currentStep += liquidationPref;
+        } else {
+          data.push({
+            name: `${sc.name} Liquidation`,
+            start: currentStep,
+            end: currentStep + remainingAmount,
+            amount: remainingAmount,
+            type: 'liquidation'
+          });
+          remainingAmount = 0;
+          break;
         }
       }
-    }
 
-    // Add remaining amount if any
-    if (remainingAmount > 0) {
-      data.push({
-        name: 'Remaining',
-        start: currentStep,
-        end: currentStep + remainingAmount,
-        amount: remainingAmount,
-        type: 'remaining'
-      });
-    }
+      // Calculate participation
+      if (remainingAmount > 0) {
+        const participatingClasses = sortedShareClasses.filter(sc => 
+          sc.prefType === "participating" || 
+          (sc.prefType === "non-participating" && sc.cap !== null)
+        );
 
-    return data;
-  };
+        const totalShares = transactions.reduce((sum, tx) => {
+          const sc = shareClasses.find(s => s.id === tx.shareClassId);
+          return sc?.prefType === "participating" ? sum + tx.shares : sum;
+        }, 0);
 
-  const calculateAndSetData = () => {
+        for (const sc of participatingClasses) {
+          const tx = transactions.find(t => t.shareClassId === sc.id);
+          if (!tx) continue;
+
+          const participation = (tx.shares / totalShares) * remainingAmount;
+          const maxParticipation = sc.cap ? tx.investment * (sc.cap - 1) : participation;
+          const actualParticipation = Math.min(participation, maxParticipation);
+
+          if (actualParticipation > 0) {
+            data.push({
+              name: `${sc.name} Participation`,
+              start: currentStep,
+              end: currentStep + actualParticipation,
+              amount: actualParticipation,
+              type: 'participation'
+            });
+            remainingAmount -= actualParticipation;
+            currentStep += actualParticipation;
+          }
+        }
+      }
+
+      // Add remaining amount if any
+      if (remainingAmount > 0) {
+        data.push({
+          name: 'Remaining',
+          start: currentStep,
+          end: currentStep + remainingAmount,
+          amount: remainingAmount,
+          type: 'remaining'
+        });
+      }
+
+      return data;
+    };
+
     const waterfallSteps = calculateWaterfallData();
     const waterfallChartData = waterfallSteps.map(step => ({
       name: step.name,
@@ -220,7 +232,50 @@ export default function WaterfallAnalysisNew() {
     }).filter((data): data is ReturnDataPoint => data !== null);
 
     setReturnData(returnsData);
-  };
+
+    // Calculate sensitivity data
+    const minExit = Math.min(...transactions.map(tx => tx.investment)) * 0.5;
+    const maxExit = Math.max(...transactions.map(tx => tx.investment)) * 4;
+    const steps = 20;
+    const stepSize = (maxExit - minExit) / steps;
+
+    const sensitivityPoints = Array.from({ length: steps + 1 }, (_, i) => {
+      const currentExit = minExit + (i * stepSize);
+      const point: SensitivityDataPoint = { exitValue: currentExit };
+      
+      shareClasses.forEach(sc => {
+        const tx = transactions.find(t => t.shareClassId === sc.id);
+        if (!tx) return;
+
+        let remainingAmount = currentExit;
+        let shareClassReturn = 0;
+
+        // Calculate liquidation preference
+        const liquidationPref = tx.investment * sc.liquidationPref;
+        if (remainingAmount >= liquidationPref) {
+          shareClassReturn += liquidationPref;
+          remainingAmount -= liquidationPref;
+        } else {
+          shareClassReturn += remainingAmount;
+          remainingAmount = 0;
+        }
+
+        // Calculate participation if applicable
+        if (remainingAmount > 0 && (sc.prefType === "participating" || (sc.prefType === "non-participating" && sc.cap !== null))) {
+          const totalShares = transactions.reduce((sum, t) => sum + t.shares, 0);
+          const participation = (tx.shares / totalShares) * remainingAmount;
+          const maxParticipation = sc.cap ? tx.investment * (sc.cap - 1) : participation;
+          shareClassReturn += Math.min(participation, maxParticipation);
+        }
+
+        point[sc.name] = shareClassReturn / tx.investment;
+      });
+
+      return point;
+    });
+
+    setSensitivityData(sensitivityPoints);
+  }, [shareClasses, transactions, exitAmount]);
 
   const renderShareClassesTable = () => (
     <div className="overflow-x-auto rounded-lg border border-gray-200">
@@ -411,12 +466,6 @@ export default function WaterfallAnalysisNew() {
                   placeholder="Enter exit value..."
                 />
               </div>
-              <Button 
-                onClick={calculateAndSetData}
-                className="bg-green-600 hover:bg-green-700 text-white"
-              >
-                Calculate
-              </Button>
             </div>
           </div>
 
@@ -476,6 +525,50 @@ export default function WaterfallAnalysisNew() {
                     />
                     <Bar dataKey="value" fill="#4F46E5" />
                   </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+          )}
+
+          {sensitivityData.length > 0 && (
+            <div className="bg-white rounded-lg shadow-md p-6">
+              <h2 className="text-2xl font-semibold text-gray-800 mb-6">Returns Sensitivity</h2>
+              <div className="h-[400px] w-full">
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={sensitivityData}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" />
+                    <XAxis 
+                      dataKey="exitValue"
+                      type="number"
+                      tickFormatter={(value) => `$${formatNumber(value)}`}
+                      tick={{ fill: '#4B5563' }}
+                    />
+                    <YAxis 
+                      tickFormatter={(value) => `${value.toFixed(1)}x`}
+                      tick={{ fill: '#4B5563' }}
+                    />
+                    <Tooltip 
+                      formatter={(value: number) => `${value.toFixed(2)}x`}
+                      labelFormatter={(value: number) => `Exit Value: $${formatNumber(value)}`}
+                      contentStyle={{ backgroundColor: 'white', border: '1px solid #E5E7EB' }}
+                    />
+                    {shareClasses.map((sc, index) => (
+                      <Line
+                        key={sc.id}
+                        type="monotone"
+                        dataKey={sc.name}
+                        stroke={['#4F46E5', '#82ca9d', '#ffc658', '#ff7300'][index % 4]}
+                        strokeWidth={2}
+                        dot={false}
+                      />
+                    ))}
+                    <ReferenceLine
+                      x={exitAmount}
+                      stroke="#dc2626"
+                      strokeDasharray="3 3"
+                      label={{ value: "Current Exit", position: 'top', fill: '#dc2626' }}
+                    />
+                  </LineChart>
                 </ResponsiveContainer>
               </div>
             </div>
