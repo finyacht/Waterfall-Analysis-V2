@@ -34,6 +34,7 @@ import {
 export interface ShareClass {
   id: number;
   name: string;
+  type: 'common' | 'preferred';
   seniority: number;
   liquidationPref: number;
   prefType: 'participating' | 'non-participating';
@@ -52,7 +53,7 @@ interface WaterfallStepData {
   start: number;
   end: number;
   amount: number;
-  type: 'liquidation' | 'participation';
+  type: 'liquidation' | 'participation' | 'common';
 }
 
 interface WaterfallDataPoint {
@@ -88,6 +89,7 @@ export default function WaterfallAnalysisNew() {
     setShareClasses([...shareClasses, {
       id: newId,
       name: `Series ${String.fromCharCode(65 + shareClasses.length)}`,
+      type: 'preferred',
       seniority: shareClasses.length + 1,
       liquidationPref: 1,
       prefType: "non-participating",
@@ -151,11 +153,17 @@ export default function WaterfallAnalysisNew() {
       let remainingAmount = exitAmount;
       let currentStep = 0;
 
-      // Sort share classes by seniority
-      const sortedShareClasses = [...shareClasses].sort((a, b) => a.seniority - b.seniority);
+      // Sort share classes by seniority (common shares always last)
+      const sortedShareClasses = [...shareClasses].sort((a, b) => {
+        if (a.type === 'common' && b.type === 'preferred') return 1;
+        if (a.type === 'preferred' && b.type === 'common') return -1;
+        return a.seniority - b.seniority;
+      });
 
-      // Calculate liquidation preferences
+      // Calculate liquidation preferences for preferred shares only
       for (const sc of sortedShareClasses) {
+        if (sc.type !== 'preferred') continue;
+        
         const tx = transactions.find(t => t.shareClassId === sc.id);
         if (!tx) continue;
 
@@ -185,18 +193,26 @@ export default function WaterfallAnalysisNew() {
 
       // Calculate participation and remaining distribution
       if (remainingAmount > 0) {
-        const totalShares = transactions.reduce((sum, tx) => sum + tx.shares, 0);
+        const totalShares = transactions.reduce((sum, tx) => {
+          const sc = shareClasses.find(s => s.id === tx.shareClassId);
+          // Only count shares that participate in this round
+          if (sc && (sc.type === 'common' || 
+              (sc.type === 'preferred' && sc.prefType === 'participating'))) {
+            return sum + tx.shares;
+          }
+          return sum;
+        }, 0);
         
         // First, calculate how much each share class would get in pro-rata distribution
         const proRataAmounts = new Map<number, number>();
         let availableForProRata = remainingAmount;
 
+        // Handle participating preferred shares first
         for (const sc of sortedShareClasses) {
+          if (sc.type !== 'preferred' || sc.prefType !== 'participating') continue;
+          
           const tx = transactions.find(t => t.shareClassId === sc.id);
           if (!tx) continue;
-
-          // Skip non-participating shares
-          if (sc.prefType === "non-participating") continue;
 
           const shareRatio = tx.shares / totalShares;
           const proRataAmount = shareRatio * remainingAmount;
@@ -207,9 +223,7 @@ export default function WaterfallAnalysisNew() {
               .filter(step => step.name.includes(sc.name))
               .reduce((sum, step) => sum + step.amount, 0);
             
-            const maxAdditional = (sc.cap * tx.investment) - data
-              .filter(step => step.name.includes(sc.name))
-              .reduce((sum, step) => sum + step.amount, 0);
+            const maxAdditional = (sc.cap * tx.investment) - totalReceived;
 
             if (maxAdditional <= 0) {
               // Already at or over cap from liquidation preference
@@ -221,31 +235,20 @@ export default function WaterfallAnalysisNew() {
             availableForProRata -= Math.min(proRataAmount, maxAdditional);
           } else {
             proRataAmounts.set(sc.id, proRataAmount);
+            availableForProRata -= proRataAmount;
           }
         }
 
-        // Distribute remaining amount to non-capped participants
-        if (availableForProRata > 0) {
-          const remainingParticipants = sortedShareClasses.filter(sc => 
-            sc.prefType === "participating" && 
-            (sc.cap === null || proRataAmounts.get(sc.id)! < sc.cap * transactions.find(t => t.shareClassId === sc.id)!.investment)
-          );
+        // Handle common shares last
+        for (const sc of sortedShareClasses) {
+          if (sc.type !== 'common') continue;
+          
+          const tx = transactions.find(t => t.shareClassId === sc.id);
+          if (!tx) continue;
 
-          if (remainingParticipants.length > 0) {
-            const remainingShares = remainingParticipants.reduce((sum, sc) => {
-              const tx = transactions.find(t => t.shareClassId === sc.id);
-              return sum + (tx ? tx.shares : 0);
-            }, 0);
-
-            for (const sc of remainingParticipants) {
-              const tx = transactions.find(t => t.shareClassId === sc.id);
-              if (!tx) continue;
-
-              const additionalAmount = (tx.shares / remainingShares) * availableForProRata;
-              const currentAmount = proRataAmounts.get(sc.id) || 0;
-              proRataAmounts.set(sc.id, currentAmount + additionalAmount);
-            }
-          }
+          const shareRatio = tx.shares / totalShares;
+          const proRataAmount = shareRatio * remainingAmount;
+          proRataAmounts.set(sc.id, proRataAmount);
         }
 
         // Add participation amounts to data
@@ -255,11 +258,11 @@ export default function WaterfallAnalysisNew() {
             if (!sc) return;
             
             data.push({
-              name: `${sc.name} Participation`,
+              name: `${sc.name} ${sc.type === 'common' ? 'Common' : 'Participation'}`,
               start: currentStep,
               end: currentStep + amount,
               amount: amount,
-              type: 'participation'
+              type: sc.type === 'common' ? 'common' : 'participation'
             });
             currentStep += amount;
           }
@@ -348,9 +351,10 @@ export default function WaterfallAnalysisNew() {
         <thead>
           <tr>
             <th className="text-left p-4 bg-gray-50 text-gray-600 font-semibold border-b">Name</th>
+            <th className="text-left p-4 bg-gray-50 text-gray-600 font-semibold border-b">Type</th>
             <th className="text-left p-4 bg-gray-50 text-gray-600 font-semibold border-b">Seniority</th>
             <th className="text-left p-4 bg-gray-50 text-gray-600 font-semibold border-b">Liquidation Preference</th>
-            <th className="text-left p-4 bg-gray-50 text-gray-600 font-semibold border-b">Type</th>
+            <th className="text-left p-4 bg-gray-50 text-gray-600 font-semibold border-b">Participation</th>
             <th className="text-left p-4 bg-gray-50 text-gray-600 font-semibold border-b">Cap</th>
             <th className="text-left p-4 bg-gray-50 text-gray-600 font-semibold border-b">Actions</th>
           </tr>
@@ -367,6 +371,16 @@ export default function WaterfallAnalysisNew() {
                 />
               </td>
               <td className="p-4">
+                <select
+                  value={sc.type}
+                  onChange={(e) => updateShareClass(sc.id, 'type', e.target.value as 'common' | 'preferred')}
+                  className="w-full h-9 rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-1 focus:ring-ring"
+                >
+                  <option value="preferred">Preferred</option>
+                  <option value="common">Common</option>
+                </select>
+              </td>
+              <td className="p-4">
                 <Input
                   type="number"
                   value={sc.seniority}
@@ -375,31 +389,35 @@ export default function WaterfallAnalysisNew() {
                 />
               </td>
               <td className="p-4">
-                <Input
-                  type="number"
-                  value={sc.liquidationPref}
-                  onChange={(e) => updateShareClass(sc.id, 'liquidationPref', parseFloat(e.target.value))}
-                  className="w-full"
-                />
+                {sc.type === 'preferred' && (
+                  <Input
+                    type="number"
+                    value={sc.liquidationPref}
+                    onChange={(e) => updateShareClass(sc.id, 'liquidationPref', parseFloat(e.target.value))}
+                    className="w-full"
+                  />
+                )}
               </td>
               <td className="p-4">
-                <select
-                  value={sc.prefType}
-                  onChange={(e) => {
-                    const newType = e.target.value as "non-participating" | "participating";
-                    updateShareClass(sc.id, 'prefType', newType);
-                    if (newType === "non-participating") {
-                      updateShareClass(sc.id, 'cap', null);
-                    }
-                  }}
-                  className="w-full h-9 rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-1 focus:ring-ring"
-                >
-                  <option value="non-participating">Non-Participating</option>
-                  <option value="participating">Participating</option>
-                </select>
+                {sc.type === 'preferred' && (
+                  <select
+                    value={sc.prefType}
+                    onChange={(e) => {
+                      const newType = e.target.value as "non-participating" | "participating";
+                      updateShareClass(sc.id, 'prefType', newType);
+                      if (newType === "non-participating") {
+                        updateShareClass(sc.id, 'cap', null);
+                      }
+                    }}
+                    className="w-full h-9 rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-1 focus:ring-ring"
+                  >
+                    <option value="non-participating">Non-Participating</option>
+                    <option value="participating">Participating</option>
+                  </select>
+                )}
               </td>
               <td className="p-4">
-                {sc.prefType === "participating" && (
+                {sc.type === 'preferred' && sc.prefType === "participating" && (
                   <Input
                     type="number"
                     value={sc.cap === null ? '' : sc.cap}
