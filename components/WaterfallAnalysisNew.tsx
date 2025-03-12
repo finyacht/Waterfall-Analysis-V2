@@ -148,7 +148,7 @@ const WaterfallAnalysisNew = () => {
     }
   };
 
-  const getShareClassById = (id: number) => shareClasses.find(sc => sc.id === id);
+  const getShareClassById = (id: number): ShareClass | undefined => shareClasses.find(sc => sc.id === id);
 
   const addTransaction = () => {
     const nextId = Math.max(...transactions.map(tx => tx.id), 0) + 1;
