@@ -37,6 +37,17 @@ interface ReturnPoint {
   [key: string]: number;
 }
 
+interface WaterfallDataPoint {
+  name: string;
+  value: number;
+  color?: string;
+}
+
+interface ReturnDataPoint {
+  name: string;
+  value: number;
+}
+
 export default function WaterfallAnalysisNew() {
   const [shareClasses, setShareClasses] = useState<ShareClass[]>([
     { id: 1, name: "Series A", seniority: 1, liquidationPref: 1, prefType: "non-participating", cap: null },
@@ -49,6 +60,9 @@ export default function WaterfallAnalysisNew() {
   ]);
 
   const [exitAmount, setExitAmount] = useState<number>(10000000);
+
+  const [waterfallData, setWaterfallData] = useState<WaterfallDataPoint[]>([]);
+  const [returnData, setReturnData] = useState<ReturnDataPoint[]>([]);
 
   const formatNumber = (num: number): string => {
     return new Intl.NumberFormat().format(num);
@@ -244,60 +258,64 @@ export default function WaterfallAnalysisNew() {
   };
 
   const renderShareClassesTable = () => (
-    <table className="w-full min-w-[800px]">
+    <table className="w-full min-w-[800px] border-collapse">
       <thead>
-        <tr className="bg-gray-50">
-          <th className="text-left p-3 text-gray-600 font-medium">Name</th>
-          <th className="text-left p-3 text-gray-600 font-medium">Seniority</th>
-          <th className="text-left p-3 text-gray-600 font-medium">Liquidation Preference</th>
-          <th className="text-left p-3 text-gray-600 font-medium">Type</th>
-          <th className="text-left p-3 text-gray-600 font-medium">Cap</th>
-          <th className="text-left p-3 text-gray-600 font-medium">Actions</th>
+        <tr>
+          <th className="text-left p-4 bg-gray-50 text-gray-600 font-semibold border-b">Name</th>
+          <th className="text-left p-4 bg-gray-50 text-gray-600 font-semibold border-b">Seniority</th>
+          <th className="text-left p-4 bg-gray-50 text-gray-600 font-semibold border-b">Liquidation Preference</th>
+          <th className="text-left p-4 bg-gray-50 text-gray-600 font-semibold border-b">Type</th>
+          <th className="text-left p-4 bg-gray-50 text-gray-600 font-semibold border-b">Cap</th>
+          <th className="text-left p-4 bg-gray-50 text-gray-600 font-semibold border-b">Actions</th>
         </tr>
       </thead>
       <tbody>
         {shareClasses.map((sc) => (
-          <tr key={sc.id}>
-            <td className="p-3">
+          <tr key={sc.id} className="border-b last:border-b-0 hover:bg-gray-50">
+            <td className="p-4">
               <Input
                 type="text"
                 value={sc.name}
                 onChange={(e) => updateShareClass(sc.id, 'name', e.target.value)}
+                className="w-full"
               />
             </td>
-            <td className="p-3">
+            <td className="p-4">
               <Input
                 type="number"
                 value={sc.seniority}
                 onChange={(e) => updateShareClass(sc.id, 'seniority', parseInt(e.target.value))}
+                className="w-full"
               />
             </td>
-            <td className="p-3">
+            <td className="p-4">
               <Input
                 type="number"
                 value={sc.liquidationPref}
                 onChange={(e) => updateShareClass(sc.id, 'liquidationPref', parseFloat(e.target.value))}
+                className="w-full"
               />
             </td>
-            <td className="p-3">
+            <td className="p-4">
               <select
                 value={sc.prefType}
                 onChange={(e) => updateShareClass(sc.id, 'prefType', e.target.value as "non-participating" | "participating")}
-                className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-1 focus:ring-ring"
+                className="w-full h-9 rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-1 focus:ring-ring"
               >
                 <option value="non-participating">Non-Participating</option>
                 <option value="participating">Participating</option>
               </select>
             </td>
-            <td className="p-3">
+            <td className="p-4">
               <Input
                 type="number"
                 value={sc.cap === null ? '' : sc.cap}
                 onChange={(e) => updateShareClass(sc.id, 'cap', e.target.value === '' ? null : parseFloat(e.target.value))}
+                className="w-full"
               />
             </td>
-            <td className="p-3">
-              <Button variant="destructive" onClick={() => deleteShareClass(sc.id)}>Delete</Button>
+            <td className="p-4">
+              <Button variant="destructive" size="sm" onClick={() => deleteShareClass(sc.id)}>Delete</Button>
             </td>
           </tr>
         ))}
@@ -306,45 +324,47 @@ export default function WaterfallAnalysisNew() {
   );
 
   const renderTransactionsTable = () => (
-    <table className="w-full min-w-[800px]">
+    <table className="w-full min-w-[800px] border-collapse">
       <thead>
-        <tr className="bg-gray-50">
-          <th className="text-left p-3 text-gray-600 font-medium w-[40%]">Share Class</th>
-          <th className="text-left p-3 text-gray-600 font-medium w-[25%]">Shares</th>
-          <th className="text-left p-3 text-gray-600 font-medium w-[25%]">Investment</th>
-          <th className="text-left p-3 text-gray-600 font-medium w-[10%]">Actions</th>
+        <tr>
+          <th className="text-left p-4 bg-gray-50 text-gray-600 font-semibold border-b w-[40%]">Share Class</th>
+          <th className="text-left p-4 bg-gray-50 text-gray-600 font-semibold border-b w-[25%]">Shares</th>
+          <th className="text-left p-4 bg-gray-50 text-gray-600 font-semibold border-b w-[25%]">Investment</th>
+          <th className="text-left p-4 bg-gray-50 text-gray-600 font-semibold border-b w-[10%]">Actions</th>
         </tr>
       </thead>
       <tbody>
         {transactions.map((tx) => (
-          <tr key={tx.id}>
-            <td className="p-3">
+          <tr key={tx.id} className="border-b last:border-b-0 hover:bg-gray-50">
+            <td className="p-4">
               <select
                 value={tx.shareClassId}
                 onChange={(e) => updateTransaction(tx.id, 'shareClassId', parseInt(e.target.value))}
-                className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-1 focus:ring-ring"
+                className="w-full h-9 rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-1 focus:ring-ring"
               >
                 {shareClasses.map((sc) => (
                   <option key={sc.id} value={sc.id}>{sc.name}</option>
                 ))}
               </select>
             </td>
-            <td className="p-3">
+            <td className="p-4">
               <Input
                 type="text"
                 value={formatNumber(tx.shares)}
                 onChange={(e) => updateTransaction(tx.id, 'shares', parseFloat(e.target.value.replace(/[^0-9]/g, '')))}
+                className="w-full"
               />
             </td>
-            <td className="p-3">
+            <td className="p-4">
               <Input
                 type="text"
                 value={formatNumber(tx.investment)}
                 onChange={(e) => updateTransaction(tx.id, 'investment', parseFloat(e.target.value.replace(/[^0-9]/g, '')))}
+                className="w-full"
               />
             </td>
-            <td className="p-3">
-              <Button variant="destructive" onClick={() => deleteTransaction(tx.id)}>Delete</Button>
+            <td className="p-4">
+              <Button variant="destructive" size="sm" onClick={() => deleteTransaction(tx.id)}>Delete</Button>
             </td>
           </tr>
         ))}
@@ -353,128 +373,97 @@ export default function WaterfallAnalysisNew() {
   );
 
   return (
-    <div className="p-4 space-y-6 max-w-[1920px] mx-auto">
-      <h1 className="text-3xl font-bold">Waterfall Analysis</h1>
+    <div className="min-h-screen bg-gray-50 p-8">
+      <div className="max-w-[1920px] mx-auto space-y-8">
+        <div className="flex items-center justify-between">
+          <h1 className="text-4xl font-bold text-gray-900">Waterfall Analysis</h1>
+        </div>
       
-      <Card>
-        <CardContent className="p-6">
-          <div className="space-y-4">
-            <div className="flex justify-between items-center">
-              <h2 className="text-xl font-semibold">Share Classes</h2>
-              <Button onClick={addShareClass}>Add Share Class</Button>
-            </div>
+        <div className="flex flex-col gap-8">
+          <div className="bg-white rounded-lg shadow-md p-6">
+            <h2 className="text-2xl font-semibold mb-6">Share Classes</h2>
             <div className="overflow-x-auto">
               {renderShareClassesTable()}
             </div>
-          </div>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardContent className="p-6">
-          <div className="space-y-4">
-            <div className="flex justify-between items-center">
-              <h2 className="text-xl font-semibold">Transactions</h2>
-              <Button onClick={addTransaction}>Add Transaction</Button>
+            <div className="mt-4">
+              <Button onClick={addShareClass} className="bg-blue-600 hover:bg-blue-700">
+                Add Share Class
+              </Button>
             </div>
+          </div>
+
+          <div className="bg-white rounded-lg shadow-md p-6">
+            <h2 className="text-2xl font-semibold mb-6">Transactions</h2>
             <div className="overflow-x-auto">
               {renderTransactionsTable()}
             </div>
-          </div>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardContent className="p-6">
-          <div className="space-y-4">
-            <h2 className="text-xl font-semibold">Exit Amount</h2>
-            <div className="flex items-center space-x-2">
-              <Label htmlFor="exitAmount">Exit Amount ($)</Label>
-              <Input
-                id="exitAmount"
-                type="text"
-                value={formatNumber(exitAmount)}
-                onChange={(e) => {
-                  const value = parseFloat(e.target.value.replace(/[^0-9]/g, ''));
-                  setExitAmount(isNaN(value) ? 0 : value);
-                }}
-                className="w-[200px]"
-              />
+            <div className="mt-4">
+              <Button onClick={addTransaction} className="bg-blue-600 hover:bg-blue-700">
+                Add Transaction
+              </Button>
             </div>
           </div>
-        </CardContent>
-      </Card>
 
-      <Card>
-        <CardContent className="p-6">
-          <div className="space-y-4">
-            <h2 className="text-xl font-semibold">Waterfall Chart</h2>
-            <div className="h-[400px]">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart
-                  data={calculateWaterfallData()}
-                  margin={{ top: 20, right: 30, left: 20, bottom: 5 }}
-                >
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="name" />
-                  <YAxis />
-                  <Tooltip formatter={(value) => formatNumber(value as number)} />
-                  <Legend />
-                  <Bar dataKey="amount" fill="#8884d8">
-                    {calculateWaterfallData().map((entry, index) => (
-                      <Cell key={`cell-${index}`} fill={getBarColor(entry.type)} />
-                    ))}
-                  </Bar>
-                  <ReferenceLine y={0} stroke="#000" />
-                </BarChart>
-              </ResponsiveContainer>
+          <div className="bg-white rounded-lg shadow-md p-6">
+            <h2 className="text-2xl font-semibold mb-6">Exit Value</h2>
+            <div className="flex items-center gap-4">
+              <div className="flex-1">
+                <Input
+                  type="text"
+                  value={formatNumber(exitAmount)}
+                  onChange={(e) => {
+                    const value = parseFloat(e.target.value.replace(/[^0-9]/g, ''));
+                    setExitAmount(isNaN(value) ? 0 : value);
+                  }}
+                  className="w-full text-lg"
+                  placeholder="Enter exit value..."
+                />
+              </div>
+              <Button onClick={calculateWaterfallData} className="bg-green-600 hover:bg-green-700">
+                Calculate
+              </Button>
             </div>
           </div>
-        </CardContent>
-      </Card>
 
-      <Card>
-        <CardContent className="p-6">
-          <div className="space-y-4">
-            <h2 className="text-xl font-semibold">Returns Chart</h2>
-            <div className="h-[400px]">
-              <ResponsiveContainer width="100%" height="100%">
-                <LineChart
-                  data={calculateReturnsData()}
-                  margin={{ top: 20, right: 30, left: 20, bottom: 5 }}
-                >
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis 
-                    dataKey="exitValue" 
-                    type="number"
-                    tickFormatter={(value) => formatNumber(value)}
-                  />
-                  <YAxis />
-                  <Tooltip 
-                    formatter={(value) => formatNumber(value as number)}
-                    labelFormatter={(value) => `Exit Value: $${formatNumber(value as number)}`}
-                  />
-                  <Legend />
-                  {shareClasses.map((sc) => (
-                    <Line
-                      key={sc.id}
-                      type="monotone"
-                      dataKey={sc.name}
-                      stroke={getShareClassColor(sc.id)}
-                      dot={false}
-                    />
-                  ))}
-                  <ReferenceLine
-                    x={exitAmount}
-                    stroke="red"
-                    label="Current Exit"
-                  />
-                </LineChart>
-              </ResponsiveContainer>
+          {waterfallData.length > 0 && (
+            <div className="bg-white rounded-lg shadow-md p-6">
+              <h2 className="text-2xl font-semibold mb-6">Waterfall Analysis</h2>
+              <div className="h-[400px] w-full">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={waterfallData}>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis dataKey="name" />
+                    <YAxis tickFormatter={(value: number) => `$${formatNumber(value)}`} />
+                    <Tooltip formatter={(value: number) => `$${formatNumber(value)}`} />
+                    <Bar dataKey="value" fill="#4F46E5">
+                      {waterfallData.map((entry: WaterfallDataPoint, index: number) => (
+                        <Cell key={`cell-${index}`} fill={entry.color || '#4F46E5'} />
+                      ))}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
             </div>
-          </div>
-        </CardContent>
-      </Card>
+          )}
+
+          {returnData.length > 0 && (
+            <div className="bg-white rounded-lg shadow-md p-6">
+              <h2 className="text-2xl font-semibold mb-6">Returns Analysis</h2>
+              <div className="h-[400px] w-full">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={returnData}>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis dataKey="name" />
+                    <YAxis tickFormatter={(value: number) => `${value.toFixed(1)}x`} />
+                    <Tooltip formatter={(value: number) => `${value.toFixed(2)}x`} />
+                    <Bar dataKey="value" fill="#4F46E5" />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
