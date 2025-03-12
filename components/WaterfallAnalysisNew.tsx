@@ -72,6 +72,191 @@ interface SensitivityDataPoint {
   [key: string]: number;
 }
 
+/**
+ * Calculates the waterfall distribution based on share classes and their preferences.
+ * 
+ * Distribution Logic:
+ * 1. Liquidation Preferences (First Round):
+ *    - Preferred shares get their liquidation preferences in order of seniority
+ *    - Example: If Series B (2x pref) invested $2M with seniority 2, they get $4M first
+ *              Then Series A (1x pref) with $1M investment and seniority 1 gets $1M
+ * 
+ * 2. Pro-rata Participation (Second Round):
+ *    - Remaining amount is distributed pro-rata based on share ownership
+ *    - Participants include:
+ *      a) Common shares
+ *      b) Participating preferred shares (subject to caps)
+ *    - Pro-rata calculation: (Individual Shares / Total Participating Shares) * Remaining Amount
+ * 
+ * 3. Cap Handling:
+ *    - For participating preferred shares with caps:
+ *      - Cap is applied as multiple of original investment
+ *      - Example: 3x cap means total return cannot exceed 3 * investment
+ *      - If cap is hit, excess is redistributed to uncapped participants
+ * 
+ * Examples:
+ * 1. Uncapped Participating Preferred:
+ *    - Investment: $1M with 1x liquidation preference
+ *    - Exit: $5M
+ *    - Gets: $1M (liquidation) + pro-rata share of remaining $4M
+ * 
+ * 2. Capped Participating Preferred:
+ *    - Investment: $1M with 1x liquidation preference, 3x cap
+ *    - Exit: $5M
+ *    - Gets: $1M (liquidation) + pro-rata share up to total of $3M
+ *    - Any excess above cap is redistributed
+ * 
+ * 3. Non-participating Preferred:
+ *    - Investment: $1M with 2x liquidation preference
+ *    - Exit: $5M
+ *    - Gets: $2M (liquidation only)
+ *    - Remaining goes to other shareholders
+ */
+const calculateWaterfallData = (
+  shareClasses: ShareClass[],
+  transactions: Transaction[],
+  exitAmount: number
+): WaterfallStepData[] => {
+  const data: WaterfallStepData[] = [];
+  let remainingAmount = exitAmount;
+  let currentStep = 0;
+
+  // Sort share classes by seniority (preferred shares sorted by seniority, common shares last)
+  const sortedShareClasses = [...shareClasses].sort((a, b) => {
+    if (a.type === 'common' && b.type === 'preferred') return 1;
+    if (a.type === 'preferred' && b.type === 'common') return -1;
+    return a.seniority - b.seniority;
+  });
+
+  // First round: Pay liquidation preferences in order of seniority
+  const preferredShares = sortedShareClasses.filter(sc => sc.type === 'preferred');
+  for (const sc of preferredShares) {
+    const tx = transactions.find(t => t.shareClassId === sc.id);
+    if (!tx) continue;
+
+    const liquidationPref = tx.investment * sc.liquidationPref;
+    if (remainingAmount >= liquidationPref) {
+      data.push({
+        name: `${sc.name} Liquidation (${sc.liquidationPref}x)`,
+        start: currentStep,
+        end: currentStep + liquidationPref,
+        amount: liquidationPref,
+        type: 'liquidation'
+      });
+      remainingAmount -= liquidationPref;
+      currentStep += liquidationPref;
+    } else if (remainingAmount > 0) {
+      data.push({
+        name: `${sc.name} Liquidation (Partial)`,
+        start: currentStep,
+        end: currentStep + remainingAmount,
+        amount: remainingAmount,
+        type: 'liquidation'
+      });
+      remainingAmount = 0;
+      currentStep += remainingAmount;
+    }
+  }
+
+  // Second round: Pro-rata participation if there's remaining amount
+  if (remainingAmount > 0) {
+    // Calculate total participating shares
+    const totalParticipatingShares = transactions.reduce((sum, tx) => {
+      const sc = shareClasses.find(s => s.id === tx.shareClassId);
+      if (sc && (
+        sc.type === 'common' || 
+        (sc.type === 'preferred' && sc.prefType === 'participating')
+      )) {
+        return sum + tx.shares;
+      }
+      return sum;
+    }, 0);
+
+    // Calculate initial pro-rata amounts for all participating shares
+    const proRataAmounts = new Map<number, number>();
+    let availableForRedistribution = 0;
+
+    // First pass: Calculate initial pro-rata amounts and identify excess due to caps
+    for (const sc of sortedShareClasses) {
+      const tx = transactions.find(t => t.shareClassId === sc.id);
+      if (!tx) continue;
+
+      if (sc.type === 'common' || (sc.type === 'preferred' && sc.prefType === 'participating')) {
+        const shareRatio = tx.shares / totalParticipatingShares;
+        let proRataAmount = shareRatio * remainingAmount;
+
+        if (sc.type === 'preferred' && sc.cap !== null) {
+          // Calculate total received so far (liquidation preference)
+          const totalReceivedSoFar = data
+            .filter(step => step.name.includes(sc.name))
+            .reduce((sum, step) => sum + step.amount, 0);
+
+          // Calculate maximum additional amount allowed by cap
+          const maxTotal = sc.cap * tx.investment;
+          const maxAdditional = Math.max(0, maxTotal - totalReceivedSoFar);
+
+          if (proRataAmount > maxAdditional) {
+            availableForRedistribution += (proRataAmount - maxAdditional);
+            proRataAmount = maxAdditional;
+          }
+        }
+
+        if (proRataAmount > 0) {
+          proRataAmounts.set(sc.id, proRataAmount);
+        }
+      }
+    }
+
+    // Second pass: Redistribute excess to uncapped participants
+    if (availableForRedistribution > 0) {
+      const uncappedShares = transactions.reduce((sum, tx) => {
+        const sc = shareClasses.find(s => s.id === tx.shareClassId);
+        if (sc && (
+          sc.type === 'common' || 
+          (sc.type === 'preferred' && sc.prefType === 'participating' && sc.cap === null)
+        )) {
+          return sum + tx.shares;
+        }
+        return sum;
+      }, 0);
+
+      if (uncappedShares > 0) {
+        for (const sc of sortedShareClasses) {
+          const tx = transactions.find(t => t.shareClassId === sc.id);
+          if (!tx) continue;
+
+          if ((sc.type === 'common') || 
+              (sc.type === 'preferred' && sc.prefType === 'participating' && sc.cap === null)) {
+            const shareRatio = tx.shares / uncappedShares;
+            const additionalAmount = shareRatio * availableForRedistribution;
+            const currentAmount = proRataAmounts.get(sc.id) || 0;
+            proRataAmounts.set(sc.id, currentAmount + additionalAmount);
+          }
+        }
+      }
+    }
+
+    // Add participation amounts to data
+    Array.from(proRataAmounts.entries()).forEach(([shareClassId, amount]) => {
+      if (amount > 0) {
+        const sc = shareClasses.find(s => s.id === shareClassId);
+        if (!sc) return;
+        
+        data.push({
+          name: `${sc.name} ${sc.type === 'common' ? 'Common' : 'Participation'}`,
+          start: currentStep,
+          end: currentStep + amount,
+          amount: amount,
+          type: sc.type === 'common' ? 'common' : 'participation'
+        });
+        currentStep += amount;
+      }
+    });
+  }
+
+  return data;
+};
+
 export default function WaterfallAnalysisNew() {
   const [shareClasses, setShareClasses] = useState<ShareClass[]>([]);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
@@ -143,148 +328,6 @@ export default function WaterfallAnalysisNew() {
 
   useEffect(() => {
     if (shareClasses.length === 0 || transactions.length === 0) return;
-
-    const calculateWaterfallData = (
-      shareClasses: ShareClass[],
-      transactions: Transaction[],
-      exitAmount: number
-    ): WaterfallStepData[] => {
-      const data: WaterfallStepData[] = [];
-      let remainingAmount = exitAmount;
-      let currentStep = 0;
-
-      // Sort share classes by seniority (preferred shares sorted by seniority, common shares last)
-      const sortedShareClasses = [...shareClasses].sort((a, b) => {
-        if (a.type === 'common' && b.type === 'preferred') return 1;
-        if (a.type === 'preferred' && b.type === 'common') return -1;
-        return a.seniority - b.seniority;
-      });
-
-      // First round: Pay liquidation preferences in order of seniority
-      for (const sc of sortedShareClasses) {
-        if (sc.type !== 'preferred') continue;
-        
-        const tx = transactions.find(t => t.shareClassId === sc.id);
-        if (!tx) continue;
-
-        const liquidationPref = tx.investment * sc.liquidationPref;
-        if (remainingAmount >= liquidationPref) {
-          data.push({
-            name: `${sc.name} Liquidation (${sc.liquidationPref}x)`,
-            start: currentStep,
-            end: currentStep + liquidationPref,
-            amount: liquidationPref,
-            type: 'liquidation'
-          });
-          remainingAmount -= liquidationPref;
-          currentStep += liquidationPref;
-        } else if (remainingAmount > 0) {
-          data.push({
-            name: `${sc.name} Liquidation (Partial)`,
-            start: currentStep,
-            end: currentStep + remainingAmount,
-            amount: remainingAmount,
-            type: 'liquidation'
-          });
-          remainingAmount = 0;
-          currentStep += remainingAmount;
-        }
-      }
-
-      // Second round: Pro-rata participation
-      if (remainingAmount > 0) {
-        // Calculate total participating shares
-        const totalShares = transactions.reduce((sum, tx) => {
-          const sc = shareClasses.find(s => s.id === tx.shareClassId);
-          if (sc && (sc.type === 'common' || 
-              (sc.type === 'preferred' && sc.prefType === 'participating'))) {
-            return sum + tx.shares;
-          }
-          return sum;
-        }, 0);
-
-        // Calculate initial pro-rata amounts
-        const proRataAmounts = new Map<number, number>();
-        let availableForProRata = remainingAmount;
-
-        // First calculate pro-rata for participating preferred shares
-        for (const sc of sortedShareClasses) {
-          if (sc.type !== 'preferred' || sc.prefType !== 'participating') continue;
-          
-          const tx = transactions.find(t => t.shareClassId === sc.id);
-          if (!tx) continue;
-
-          const shareRatio = tx.shares / totalShares;
-          let proRataAmount = shareRatio * remainingAmount;
-
-          // Check participation cap
-          if (sc.cap !== null) {
-            const totalReceived = data
-              .filter(step => step.name.includes(sc.name))
-              .reduce((sum, step) => sum + step.amount, 0);
-            
-            const maxTotal = sc.cap * tx.investment;
-            const maxAdditional = maxTotal - totalReceived;
-
-            if (maxAdditional <= 0) {
-              proRataAmount = 0;
-            } else {
-              proRataAmount = Math.min(proRataAmount, maxAdditional);
-            }
-          }
-
-          if (proRataAmount > 0) {
-            proRataAmounts.set(sc.id, proRataAmount);
-            availableForProRata -= proRataAmount;
-          }
-        }
-
-        // Redistribute excess to uncapped participants
-        if (availableForProRata > 0) {
-          const uncappedShares = transactions.reduce((sum, tx) => {
-            const sc = shareClasses.find(s => s.id === tx.shareClassId);
-            if (sc && ((sc.type === 'common') || 
-                (sc.type === 'preferred' && sc.prefType === 'participating' && sc.cap === null))) {
-              return sum + tx.shares;
-            }
-            return sum;
-          }, 0);
-
-          // Distribute to common shares and uncapped participating preferred
-          for (const sc of sortedShareClasses) {
-            if (sc.type === 'common' || 
-                (sc.type === 'preferred' && sc.prefType === 'participating' && sc.cap === null)) {
-              const tx = transactions.find(t => t.shareClassId === sc.id);
-              if (!tx) continue;
-
-              const shareRatio = tx.shares / uncappedShares;
-              const additionalAmount = shareRatio * availableForProRata;
-              const currentAmount = proRataAmounts.get(sc.id) || 0;
-              proRataAmounts.set(sc.id, currentAmount + additionalAmount);
-            }
-          }
-        }
-
-        // Add participation amounts to data
-        Array.from(proRataAmounts.entries()).forEach(([shareClassId, amount]) => {
-          if (amount > 0) {
-            const sc = shareClasses.find(s => s.id === shareClassId);
-            if (!sc) return;
-            
-            data.push({
-              name: `${sc.name} ${sc.type === 'common' ? 'Common' : 'Participation'}`,
-              start: currentStep,
-              end: currentStep + amount,
-              amount: amount,
-              type: sc.type === 'common' ? 'common' : 'participation'
-            });
-            currentStep += amount;
-          }
-        });
-      }
-
-      return data;
-    };
 
     const waterfallSteps = calculateWaterfallData(shareClasses, transactions, exitAmount);
     const waterfallChartData = waterfallSteps.map(step => ({
