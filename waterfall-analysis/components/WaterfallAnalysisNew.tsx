@@ -1,10 +1,11 @@
 'use client';
 
 // Force rebuild - remove old cached files
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from "recharts";
+import { LineChart, Line, ReferenceLine } from "recharts";
 
 export interface ShareClass {
   id: number;
@@ -41,42 +42,25 @@ interface ReturnDataPoint {
   value: number;
 }
 
+interface SensitivityDataPoint {
+  exitValue: number;
+  [key: string]: number;
+}
+
 export default function WaterfallAnalysisNew() {
-  const [shareClasses, setShareClasses] = useState<ShareClass[]>([
-    { id: 1, name: "Series A", seniority: 1, liquidationPref: 1, prefType: "non-participating", cap: null },
-    { id: 2, name: "Series B", seniority: 2, liquidationPref: 1.5, prefType: "participating", cap: 3 }
-  ]);
-
-  const [transactions, setTransactions] = useState<Transaction[]>([
-    { id: 1, shareClassId: 1, shares: 1000000, investment: 1000000 },
-    { id: 2, shareClassId: 2, shares: 500000, investment: 2000000 }
-  ]);
-
+  const [shareClasses, setShareClasses] = useState<ShareClass[]>([]);
+  const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [exitAmount, setExitAmount] = useState<number>(10000000);
-
   const [waterfallData, setWaterfallData] = useState<WaterfallDataPoint[]>([]);
   const [returnData, setReturnData] = useState<ReturnDataPoint[]>([]);
+  const [sensitivityData, setSensitivityData] = useState<SensitivityDataPoint[]>([]);
 
   const formatNumber = (num: number): string => {
-    return new Intl.NumberFormat().format(num);
+    return new Intl.NumberFormat('en-US').format(num);
   };
 
-  const updateTransaction = (id: number, field: keyof Transaction, value: number | string): void => {
-    setTransactions(prevTransactions => 
-      prevTransactions.map(tx => 
-        tx.id === id ? { ...tx, [field]: value } : tx
-      )
-    );
-  };
-
-  const deleteTransaction = (id: number): void => {
-    setTransactions(prevTransactions => 
-      prevTransactions.filter(tx => tx.id !== id)
-    );
-  };
-
-  const addShareClass = (): void => {
-    const newId = Math.max(...shareClasses.map(sc => sc.id)) + 1;
+  const addShareClass = () => {
+    const newId = shareClasses.length > 0 ? Math.max(...shareClasses.map(sc => sc.id)) + 1 : 1;
     setShareClasses([...shareClasses, {
       id: newId,
       name: `Series ${String.fromCharCode(65 + shareClasses.length)}`,
@@ -87,124 +71,122 @@ export default function WaterfallAnalysisNew() {
     }]);
   };
 
-  const deleteShareClass = (id: number): void => {
+  const addTransaction = () => {
+    if (shareClasses.length === 0) {
+      alert("Please add at least one share class first");
+      return;
+    }
+    const newId = transactions.length > 0 ? Math.max(...transactions.map(tx => tx.id)) + 1 : 1;
+    setTransactions([...transactions, {
+      id: newId,
+      shareClassId: shareClasses[0].id,
+      shares: 1000000,
+      investment: 1000000
+    }]);
+  };
+
+  const updateShareClass = (id: number, field: keyof ShareClass, value: ShareClass[keyof ShareClass]) => {
+    setShareClasses(shareClasses.map(sc => {
+      if (sc.id === id) {
+        if (field === 'prefType' && value === 'non-participating') {
+          return { ...sc, [field]: value, cap: null };
+        }
+        return { ...sc, [field]: value };
+      }
+      return sc;
+    }));
+  };
+
+  const updateTransaction = (id: number, field: keyof Transaction, value: Transaction[keyof Transaction]) => {
+    setTransactions(transactions.map(tx => {
+      if (tx.id === id) {
+        return { ...tx, [field]: value };
+      }
+      return tx;
+    }));
+  };
+
+  const deleteShareClass = (id: number) => {
     setShareClasses(shareClasses.filter(sc => sc.id !== id));
     setTransactions(transactions.filter(tx => tx.shareClassId !== id));
   };
 
-  const addTransaction = (): void => {
-    const newId = Math.max(...transactions.map(tx => tx.id), 0) + 1;
-    const defaultShareClassId = shareClasses[0]?.id || 0;
-    
-    setTransactions([...transactions, {
-      id: newId,
-      shareClassId: defaultShareClassId,
-      shares: 0,
-      investment: 0
-    }]);
+  const deleteTransaction = (id: number) => {
+    setTransactions(transactions.filter(tx => tx.id !== id));
   };
 
-  const updateShareClass = (id: number, field: keyof ShareClass, value: string | number | null): void => {
-    setShareClasses(prevShareClasses => 
-      prevShareClasses.map(sc => 
-        sc.id === id ? { ...sc, [field]: value } : sc
-      )
-    );
-  };
+  useEffect(() => {
+    if (shareClasses.length === 0 || transactions.length === 0) return;
 
-  const calculateWaterfallData = (): WaterfallStepData[] => {
-    const data: WaterfallStepData[] = [];
-    let remainingAmount = exitAmount;
-    let currentStep = 0;
+    const calculateWaterfallData = () => {
+      const data: WaterfallStepData[] = [];
+      let remainingAmount = exitAmount;
+      let currentStep = 0;
 
-    // Sort share classes by seniority
-    const sortedShareClasses = [...shareClasses].sort((a, b) => a.seniority - b.seniority);
+      // Sort share classes by seniority
+      const sortedShareClasses = [...shareClasses].sort((a, b) => a.seniority - b.seniority);
 
-    // Calculate liquidation preferences
-    for (const sc of sortedShareClasses) {
-      const tx = transactions.find(t => t.shareClassId === sc.id);
-      if (!tx) continue;
-
-      const liquidationPref = tx.investment * sc.liquidationPref;
-      if (remainingAmount >= liquidationPref) {
-        data.push({
-          name: `${sc.name} Liquidation`,
-          start: currentStep,
-          end: currentStep + liquidationPref,
-          amount: liquidationPref,
-          type: 'liquidation'
-        });
-        remainingAmount -= liquidationPref;
-        currentStep += liquidationPref;
-      } else {
-        data.push({
-          name: `${sc.name} Liquidation`,
-          start: currentStep,
-          end: currentStep + remainingAmount,
-          amount: remainingAmount,
-          type: 'liquidation'
-        });
-        remainingAmount = 0;
-        break;
-      }
-    }
-
-    // Calculate participation
-    if (remainingAmount > 0) {
-      const participatingClasses = sortedShareClasses.filter(sc => 
-        sc.prefType === "participating" || 
-        (sc.prefType === "non-participating" && sc.cap !== null)
-      );
-
-      const totalShares = transactions.reduce((sum, tx) => {
-        const sc = shareClasses.find(s => s.id === tx.shareClassId);
-        return sc?.prefType === "participating" ? sum + tx.shares : sum;
-      }, 0);
-
-      for (const sc of participatingClasses) {
+      // Calculate liquidation preferences
+      for (const sc of sortedShareClasses) {
         const tx = transactions.find(t => t.shareClassId === sc.id);
         if (!tx) continue;
 
-        const participation = (tx.shares / totalShares) * remainingAmount;
-        const maxParticipation = sc.cap ? tx.investment * (sc.cap - 1) : participation;
-        const actualParticipation = Math.min(participation, maxParticipation);
-
-        if (actualParticipation > 0) {
+        const liquidationPref = tx.investment * sc.liquidationPref;
+        if (remainingAmount >= liquidationPref) {
           data.push({
-            name: `${sc.name} Participation`,
+            name: `${sc.name} Liquidation`,
             start: currentStep,
-            end: currentStep + actualParticipation,
-            amount: actualParticipation,
-            type: 'participation'
+            end: currentStep + liquidationPref,
+            amount: liquidationPref,
+            type: 'liquidation'
           });
-          remainingAmount -= actualParticipation;
-          currentStep += actualParticipation;
+          remainingAmount -= liquidationPref;
+          currentStep += liquidationPref;
+        } else {
+          data.push({
+            name: `${sc.name} Liquidation`,
+            start: currentStep,
+            end: currentStep + remainingAmount,
+            amount: remainingAmount,
+            type: 'liquidation'
+          });
+          remainingAmount = 0;
+          break;
         }
       }
-    }
 
-    // Add remaining amount if any
-    if (remainingAmount > 0) {
-      data.push({
-        name: 'Remaining',
-        start: currentStep,
-        end: currentStep + remainingAmount,
-        amount: remainingAmount,
-        type: 'remaining'
-      });
-    }
+      // Calculate participation and remaining distribution
+      if (remainingAmount > 0) {
+        const totalShares = transactions.reduce((sum, tx) => sum + tx.shares, 0);
+        
+        for (const sc of sortedShareClasses) {
+          const tx = transactions.find(t => t.shareClassId === sc.id);
+          if (!tx) continue;
 
-    return data;
-  };
+          const shareRatio = tx.shares / totalShares;
+          const participation = shareRatio * remainingAmount;
 
-  const calculateAndSetData = () => {
+          if (participation > 0) {
+            data.push({
+              name: `${sc.name} Participation`,
+              start: currentStep,
+              end: currentStep + participation,
+              amount: participation,
+              type: 'participation'
+            });
+            currentStep += participation;
+          }
+        }
+      }
+
+      return data;
+    };
+
     const waterfallSteps = calculateWaterfallData();
     const waterfallChartData = waterfallSteps.map(step => ({
       name: step.name,
       value: step.amount,
-      color: step.type === 'liquidation' ? '#8884d8' : 
-             step.type === 'participation' ? '#82ca9d' : 
-             step.type === 'remaining' ? '#ffc658' : '#000000'
+      color: step.type === 'liquidation' ? '#8884d8' : '#82ca9d'
     }));
     setWaterfallData(waterfallChartData);
 
@@ -227,157 +209,228 @@ export default function WaterfallAnalysisNew() {
     }).filter((data): data is ReturnDataPoint => data !== null);
 
     setReturnData(returnsData);
-  };
+
+    // Calculate sensitivity data
+    const minExit = Math.min(...transactions.map(tx => tx.investment)) * 0.5;
+    const maxExit = Math.max(...transactions.map(tx => tx.investment)) * 4;
+    const steps = 20;
+    const stepSize = (maxExit - minExit) / steps;
+
+    const sensitivityPoints = Array.from({ length: steps + 1 }, (_, i) => {
+      const currentExit = minExit + (i * stepSize);
+      const point: SensitivityDataPoint = { exitValue: currentExit };
+      
+      const totalShares = transactions.reduce((sum, tx) => sum + tx.shares, 0);
+      let remainingAmount = currentExit;
+
+      shareClasses.forEach(sc => {
+        const tx = transactions.find(t => t.shareClassId === sc.id);
+        if (!tx) return;
+
+        let shareClassReturn = 0;
+
+        // Calculate liquidation preference
+        const liquidationPref = tx.investment * sc.liquidationPref;
+        if (remainingAmount >= liquidationPref) {
+          shareClassReturn += liquidationPref;
+          remainingAmount -= liquidationPref;
+        } else {
+          shareClassReturn += remainingAmount;
+          remainingAmount = 0;
+        }
+
+        // Calculate participation
+        if (remainingAmount > 0) {
+          const shareRatio = tx.shares / totalShares;
+          const participation = shareRatio * remainingAmount;
+          shareClassReturn += participation;
+        }
+
+        point[sc.name] = shareClassReturn / tx.investment;
+      });
+
+      return point;
+    });
+
+    setSensitivityData(sensitivityPoints);
+  }, [shareClasses, transactions, exitAmount]);
 
   const renderShareClassesTable = () => (
-    <table className="w-full min-w-[800px] border-collapse">
-      <thead>
-        <tr>
-          <th className="text-left p-4 bg-gray-50 text-gray-600 font-semibold border-b">Name</th>
-          <th className="text-left p-4 bg-gray-50 text-gray-600 font-semibold border-b">Seniority</th>
-          <th className="text-left p-4 bg-gray-50 text-gray-600 font-semibold border-b">Liquidation Preference</th>
-          <th className="text-left p-4 bg-gray-50 text-gray-600 font-semibold border-b">Type</th>
-          <th className="text-left p-4 bg-gray-50 text-gray-600 font-semibold border-b">Cap</th>
-          <th className="text-left p-4 bg-gray-50 text-gray-600 font-semibold border-b">Actions</th>
-        </tr>
-      </thead>
-      <tbody>
-        {shareClasses.map((sc) => (
-          <tr key={sc.id} className="border-b last:border-b-0 hover:bg-gray-50">
-            <td className="p-4">
-              <Input
-                type="text"
-                value={sc.name}
-                onChange={(e) => updateShareClass(sc.id, 'name', e.target.value)}
-                className="w-full"
-              />
-            </td>
-            <td className="p-4">
-              <Input
-                type="number"
-                value={sc.seniority}
-                onChange={(e) => updateShareClass(sc.id, 'seniority', parseInt(e.target.value))}
-                className="w-full"
-              />
-            </td>
-            <td className="p-4">
-              <Input
-                type="number"
-                value={sc.liquidationPref}
-                onChange={(e) => updateShareClass(sc.id, 'liquidationPref', parseFloat(e.target.value))}
-                className="w-full"
-              />
-            </td>
-            <td className="p-4">
-              <select
-                value={sc.prefType}
-                onChange={(e) => updateShareClass(sc.id, 'prefType', e.target.value as "non-participating" | "participating")}
-                className="w-full h-9 rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-1 focus:ring-ring"
-              >
-                <option value="non-participating">Non-Participating</option>
-                <option value="participating">Participating</option>
-              </select>
-            </td>
-            <td className="p-4">
-              <Input
-                type="number"
-                value={sc.cap === null ? '' : sc.cap}
-                onChange={(e) => updateShareClass(sc.id, 'cap', e.target.value === '' ? null : parseFloat(e.target.value))}
-                className="w-full"
-              />
-            </td>
-            <td className="p-4">
-              <Button variant="destructive" size="sm" onClick={() => deleteShareClass(sc.id)}>Delete</Button>
-            </td>
+    <div className="overflow-x-auto rounded-lg border border-gray-200">
+      <table className="w-full min-w-[800px] border-collapse">
+        <thead>
+          <tr>
+            <th className="text-left p-4 bg-gray-50 text-gray-600 font-semibold border-b">Name</th>
+            <th className="text-left p-4 bg-gray-50 text-gray-600 font-semibold border-b">Seniority</th>
+            <th className="text-left p-4 bg-gray-50 text-gray-600 font-semibold border-b">Liquidation Preference</th>
+            <th className="text-left p-4 bg-gray-50 text-gray-600 font-semibold border-b">Type</th>
+            <th className="text-left p-4 bg-gray-50 text-gray-600 font-semibold border-b">Cap</th>
+            <th className="text-left p-4 bg-gray-50 text-gray-600 font-semibold border-b">Actions</th>
           </tr>
-        ))}
-      </tbody>
-    </table>
+        </thead>
+        <tbody>
+          {shareClasses.map((sc) => (
+            <tr key={sc.id} className="border-b last:border-b-0 hover:bg-gray-50">
+              <td className="p-4">
+                <Input
+                  type="text"
+                  value={sc.name}
+                  onChange={(e) => updateShareClass(sc.id, 'name', e.target.value)}
+                  className="w-full"
+                />
+              </td>
+              <td className="p-4">
+                <Input
+                  type="number"
+                  value={sc.seniority}
+                  onChange={(e) => updateShareClass(sc.id, 'seniority', parseInt(e.target.value))}
+                  className="w-full"
+                />
+              </td>
+              <td className="p-4">
+                <Input
+                  type="number"
+                  value={sc.liquidationPref}
+                  onChange={(e) => updateShareClass(sc.id, 'liquidationPref', parseFloat(e.target.value))}
+                  className="w-full"
+                />
+              </td>
+              <td className="p-4">
+                <select
+                  value={sc.prefType}
+                  onChange={(e) => {
+                    const newType = e.target.value as "non-participating" | "participating";
+                    updateShareClass(sc.id, 'prefType', newType);
+                    if (newType === "non-participating") {
+                      updateShareClass(sc.id, 'cap', null);
+                    }
+                  }}
+                  className="w-full h-9 rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-1 focus:ring-ring"
+                >
+                  <option value="non-participating">Non-Participating</option>
+                  <option value="participating">Participating</option>
+                </select>
+              </td>
+              <td className="p-4">
+                {sc.prefType === "participating" && (
+                  <Input
+                    type="number"
+                    value={sc.cap === null ? '' : sc.cap}
+                    onChange={(e) => updateShareClass(sc.id, 'cap', e.target.value === '' ? null : parseFloat(e.target.value))}
+                    className="w-full"
+                    placeholder="No cap"
+                  />
+                )}
+              </td>
+              <td className="p-4">
+                <Button 
+                  variant="destructive" 
+                  size="sm" 
+                  onClick={() => deleteShareClass(sc.id)}
+                  className="bg-red-600 hover:bg-red-700 text-white"
+                >
+                  Delete
+                </Button>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 
   const renderTransactionsTable = () => (
-    <table className="w-full min-w-[800px] border-collapse">
-      <thead>
-        <tr>
-          <th className="text-left p-4 bg-gray-50 text-gray-600 font-semibold border-b w-[40%]">Share Class</th>
-          <th className="text-left p-4 bg-gray-50 text-gray-600 font-semibold border-b w-[25%]">Shares</th>
-          <th className="text-left p-4 bg-gray-50 text-gray-600 font-semibold border-b w-[25%]">Investment</th>
-          <th className="text-left p-4 bg-gray-50 text-gray-600 font-semibold border-b w-[10%]">Actions</th>
-        </tr>
-      </thead>
-      <tbody>
-        {transactions.map((tx) => (
-          <tr key={tx.id} className="border-b last:border-b-0 hover:bg-gray-50">
-            <td className="p-4">
-              <select
-                value={tx.shareClassId}
-                onChange={(e) => updateTransaction(tx.id, 'shareClassId', parseInt(e.target.value))}
-                className="w-full h-9 rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-1 focus:ring-ring"
-              >
-                {shareClasses.map((sc) => (
-                  <option key={sc.id} value={sc.id}>{sc.name}</option>
-                ))}
-              </select>
-            </td>
-            <td className="p-4">
-              <Input
-                type="text"
-                value={formatNumber(tx.shares)}
-                onChange={(e) => updateTransaction(tx.id, 'shares', parseFloat(e.target.value.replace(/[^0-9]/g, '')))}
-                className="w-full"
-              />
-            </td>
-            <td className="p-4">
-              <Input
-                type="text"
-                value={formatNumber(tx.investment)}
-                onChange={(e) => updateTransaction(tx.id, 'investment', parseFloat(e.target.value.replace(/[^0-9]/g, '')))}
-                className="w-full"
-              />
-            </td>
-            <td className="p-4">
-              <Button variant="destructive" size="sm" onClick={() => deleteTransaction(tx.id)}>Delete</Button>
-            </td>
+    <div className="overflow-x-auto rounded-lg border border-gray-200">
+      <table className="w-full min-w-[800px] border-collapse">
+        <thead>
+          <tr>
+            <th className="text-left p-4 bg-gray-50 text-gray-600 font-semibold border-b w-[40%]">Share Class</th>
+            <th className="text-left p-4 bg-gray-50 text-gray-600 font-semibold border-b w-[25%]">Shares</th>
+            <th className="text-left p-4 bg-gray-50 text-gray-600 font-semibold border-b w-[25%]">Investment</th>
+            <th className="text-left p-4 bg-gray-50 text-gray-600 font-semibold border-b w-[10%]">Actions</th>
           </tr>
-        ))}
-      </tbody>
-    </table>
+        </thead>
+        <tbody>
+          {transactions.map((tx) => (
+            <tr key={tx.id} className="border-b last:border-b-0 hover:bg-gray-50">
+              <td className="p-4">
+                <select
+                  value={tx.shareClassId}
+                  onChange={(e) => updateTransaction(tx.id, 'shareClassId', parseInt(e.target.value))}
+                  className="w-full h-9 rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-1 focus:ring-ring"
+                >
+                  {shareClasses.map((sc) => (
+                    <option key={sc.id} value={sc.id}>{sc.name}</option>
+                  ))}
+                </select>
+              </td>
+              <td className="p-4">
+                <Input
+                  type="text"
+                  value={formatNumber(tx.shares)}
+                  onChange={(e) => updateTransaction(tx.id, 'shares', parseFloat(e.target.value.replace(/[^0-9]/g, '')))}
+                  className="w-full"
+                />
+              </td>
+              <td className="p-4">
+                <Input
+                  type="text"
+                  value={formatNumber(tx.investment)}
+                  onChange={(e) => updateTransaction(tx.id, 'investment', parseFloat(e.target.value.replace(/[^0-9]/g, '')))}
+                  className="w-full"
+                />
+              </td>
+              <td className="p-4">
+                <Button 
+                  variant="destructive" 
+                  size="sm" 
+                  onClick={() => deleteTransaction(tx.id)}
+                  className="bg-red-600 hover:bg-red-700 text-white"
+                >
+                  Delete
+                </Button>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 
   return (
-    <div className="min-h-screen bg-gray-50 p-8">
-      <div className="max-w-[1920px] mx-auto space-y-8">
-        <div className="flex items-center justify-between">
-          <h1 className="text-4xl font-bold text-gray-900">Waterfall Analysis</h1>
-        </div>
-      
+    <div className="min-h-screen bg-gray-50 py-8">
+      <div className="container mx-auto px-4">
+        <h1 className="text-3xl font-bold text-gray-900 mb-8">Waterfall Analysis</h1>
+        
         <div className="flex flex-col gap-8">
           <div className="bg-white rounded-lg shadow-md p-6">
-            <h2 className="text-2xl font-semibold mb-6">Share Classes</h2>
-            <div className="overflow-x-auto">
-              {renderShareClassesTable()}
-            </div>
-            <div className="mt-4">
-              <Button onClick={addShareClass} className="bg-blue-600 hover:bg-blue-700">
+            <div className="flex justify-between items-center mb-6">
+              <h2 className="text-2xl font-semibold text-gray-800">Share Classes</h2>
+              <Button 
+                onClick={addShareClass}
+                className="bg-blue-600 hover:bg-blue-700 text-white"
+              >
                 Add Share Class
               </Button>
             </div>
+            {renderShareClassesTable()}
           </div>
 
           <div className="bg-white rounded-lg shadow-md p-6">
-            <h2 className="text-2xl font-semibold mb-6">Transactions</h2>
-            <div className="overflow-x-auto">
-              {renderTransactionsTable()}
-            </div>
-            <div className="mt-4">
-              <Button onClick={addTransaction} className="bg-blue-600 hover:bg-blue-700">
+            <div className="flex justify-between items-center mb-6">
+              <h2 className="text-2xl font-semibold text-gray-800">Transactions</h2>
+              <Button 
+                onClick={addTransaction}
+                className="bg-blue-600 hover:bg-blue-700 text-white"
+              >
                 Add Transaction
               </Button>
             </div>
+            {renderTransactionsTable()}
           </div>
 
           <div className="bg-white rounded-lg shadow-md p-6">
-            <h2 className="text-2xl font-semibold mb-6">Exit Value</h2>
+            <h2 className="text-2xl font-semibold text-gray-800 mb-6">Exit Value</h2>
             <div className="flex items-center gap-4">
               <div className="flex-1">
                 <Input
@@ -391,24 +444,32 @@ export default function WaterfallAnalysisNew() {
                   placeholder="Enter exit value..."
                 />
               </div>
-              <Button onClick={calculateAndSetData} className="bg-green-600 hover:bg-green-700">
-                Calculate
-              </Button>
             </div>
           </div>
 
           {waterfallData.length > 0 && (
             <div className="bg-white rounded-lg shadow-md p-6">
-              <h2 className="text-2xl font-semibold mb-6">Waterfall Analysis</h2>
+              <h2 className="text-2xl font-semibold text-gray-800 mb-6">Waterfall Analysis</h2>
               <div className="h-[400px] w-full">
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={waterfallData}>
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="name" />
-                    <YAxis tickFormatter={(value: number) => `$${formatNumber(value)}`} />
-                    <Tooltip formatter={(value: number) => `$${formatNumber(value)}`} />
+                    <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" />
+                    <XAxis 
+                      dataKey="name" 
+                      tick={{ fill: '#4B5563' }}
+                      interval={0}
+                      height={40}
+                    />
+                    <YAxis 
+                      tickFormatter={(value) => `$${formatNumber(value)}`}
+                      tick={{ fill: '#4B5563' }}
+                    />
+                    <Tooltip 
+                      formatter={(value: number) => `$${formatNumber(value)}`}
+                      contentStyle={{ backgroundColor: 'white', border: '1px solid #E5E7EB' }}
+                    />
                     <Bar dataKey="value" fill="#4F46E5">
-                      {waterfallData.map((entry: WaterfallDataPoint, index: number) => (
+                      {waterfallData.map((entry, index) => (
                         <Cell key={`cell-${index}`} fill={entry.color || '#4F46E5'} />
                       ))}
                     </Bar>
@@ -420,16 +481,74 @@ export default function WaterfallAnalysisNew() {
 
           {returnData.length > 0 && (
             <div className="bg-white rounded-lg shadow-md p-6">
-              <h2 className="text-2xl font-semibold mb-6">Returns Analysis</h2>
+              <h2 className="text-2xl font-semibold text-gray-800 mb-6">Returns Analysis</h2>
               <div className="h-[400px] w-full">
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={returnData}>
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="name" />
-                    <YAxis tickFormatter={(value: number) => `${value.toFixed(1)}x`} />
-                    <Tooltip formatter={(value: number) => `${value.toFixed(2)}x`} />
-                    <Bar dataKey="value" fill="#4F46E5" />
+                    <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" />
+                    <XAxis 
+                      dataKey="name" 
+                      tick={{ fill: '#4B5563' }}
+                      interval={0}
+                    />
+                    <YAxis 
+                      tickFormatter={(value) => `${value.toFixed(1)}x`}
+                      tick={{ fill: '#4B5563' }}
+                    />
+                    <Tooltip 
+                      formatter={(value: number) => `${value.toFixed(2)}x`}
+                      contentStyle={{ backgroundColor: 'white', border: '1px solid #E5E7EB' }}
+                    />
+                    <Bar dataKey="value" fill="#4F46E5">
+                      {returnData.map((entry, index) => (
+                        <Cell key={`cell-${index}`} fill={['#4F46E5', '#82ca9d', '#ffc658', '#ff7300'][index % 4]} />
+                      ))}
+                    </Bar>
                   </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+          )}
+
+          {sensitivityData.length > 0 && (
+            <div className="bg-white rounded-lg shadow-md p-6">
+              <h2 className="text-2xl font-semibold text-gray-800 mb-6">Returns Sensitivity</h2>
+              <div className="h-[400px] w-full">
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={sensitivityData}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" />
+                    <XAxis 
+                      dataKey="exitValue"
+                      type="number"
+                      tickFormatter={(value) => `$${formatNumber(value)}`}
+                      tick={{ fill: '#4B5563' }}
+                    />
+                    <YAxis 
+                      tickFormatter={(value) => `${value.toFixed(1)}x`}
+                      tick={{ fill: '#4B5563' }}
+                    />
+                    <Tooltip 
+                      formatter={(value: number) => `${value.toFixed(2)}x`}
+                      labelFormatter={(value: number) => `Exit Value: $${formatNumber(value)}`}
+                      contentStyle={{ backgroundColor: 'white', border: '1px solid #E5E7EB' }}
+                    />
+                    {shareClasses.map((sc, index) => (
+                      <Line
+                        key={sc.id}
+                        type="monotone"
+                        dataKey={sc.name}
+                        stroke={['#4F46E5', '#82ca9d', '#ffc658', '#ff7300'][index % 4]}
+                        strokeWidth={2}
+                        dot={false}
+                      />
+                    ))}
+                    <ReferenceLine
+                      x={exitAmount}
+                      stroke="#dc2626"
+                      strokeDasharray="3 3"
+                      label={{ value: "Current Exit", position: 'top', fill: '#dc2626' }}
+                    />
+                  </LineChart>
                 </ResponsiveContainer>
               </div>
             </div>
