@@ -4,23 +4,47 @@
 import React, { useState, useEffect } from "react";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from "recharts";
-import { LineChart, Line, ReferenceLine } from "recharts";
+import type {
+  BarChart as BarChartType,
+  Bar as BarType,
+  XAxis as XAxisType,
+  YAxis as YAxisType,
+  CartesianGrid as CartesianGridType,
+  Tooltip as TooltipType,
+  ResponsiveContainer as ResponsiveContainerType,
+  Cell as CellType,
+  LineChart as LineChartType,
+  Line as LineType,
+  ReferenceLine as ReferenceLineType
+} from "recharts";
+import {
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+  Cell,
+  LineChart,
+  Line,
+  ReferenceLine
+} from "recharts";
 
 export interface ShareClass {
   id: number;
   name: string;
   seniority: number;
   liquidationPref: number;
-  prefType: "non-participating" | "participating";
+  prefType: 'participating' | 'non-participating';
   cap: number | null;
 }
 
 export interface Transaction {
   id: number;
   shareClassId: number;
-  shares: number;
   investment: number;
+  shares: number;
 }
 
 interface WaterfallStepData {
@@ -28,7 +52,7 @@ interface WaterfallStepData {
   start: number;
   end: number;
   amount: number;
-  type: string;
+  type: 'liquidation' | 'participation';
 }
 
 interface WaterfallDataPoint {
@@ -118,7 +142,11 @@ export default function WaterfallAnalysisNew() {
   useEffect(() => {
     if (shareClasses.length === 0 || transactions.length === 0) return;
 
-    const calculateWaterfallData = () => {
+    const calculateWaterfallData = (
+      shareClasses: ShareClass[],
+      transactions: Transaction[],
+      exitAmount: number
+    ): WaterfallStepData[] => {
       const data: WaterfallStepData[] = [];
       let remainingAmount = exitAmount;
       let currentStep = 0;
@@ -142,7 +170,7 @@ export default function WaterfallAnalysisNew() {
           });
           remainingAmount -= liquidationPref;
           currentStep += liquidationPref;
-        } else {
+        } else if (remainingAmount > 0) {
           data.push({
             name: `${sc.name} Liquidation`,
             start: currentStep,
@@ -151,7 +179,7 @@ export default function WaterfallAnalysisNew() {
             type: 'liquidation'
           });
           remainingAmount = 0;
-          break;
+          currentStep += remainingAmount;
         }
       }
 
@@ -159,30 +187,89 @@ export default function WaterfallAnalysisNew() {
       if (remainingAmount > 0) {
         const totalShares = transactions.reduce((sum, tx) => sum + tx.shares, 0);
         
+        // First, calculate how much each share class would get in pro-rata distribution
+        const proRataAmounts = new Map<number, number>();
+        let availableForProRata = remainingAmount;
+
         for (const sc of sortedShareClasses) {
           const tx = transactions.find(t => t.shareClassId === sc.id);
           if (!tx) continue;
 
-          const shareRatio = tx.shares / totalShares;
-          const participation = shareRatio * remainingAmount;
+          // Skip non-participating shares
+          if (sc.prefType === "non-participating") continue;
 
-          if (participation > 0) {
+          const shareRatio = tx.shares / totalShares;
+          const proRataAmount = shareRatio * remainingAmount;
+
+          // Check if this would exceed the cap
+          if (sc.cap !== null) {
+            const totalReceived = data
+              .filter(step => step.name.includes(sc.name))
+              .reduce((sum, step) => sum + step.amount, 0);
+            
+            const maxAdditional = (sc.cap * tx.investment) - data
+              .filter(step => step.name.includes(sc.name))
+              .reduce((sum, step) => sum + step.amount, 0);
+
+            if (maxAdditional <= 0) {
+              // Already at or over cap from liquidation preference
+              continue;
+            }
+
+            // Limit participation to cap
+            proRataAmounts.set(sc.id, Math.min(proRataAmount, maxAdditional));
+            availableForProRata -= Math.min(proRataAmount, maxAdditional);
+          } else {
+            proRataAmounts.set(sc.id, proRataAmount);
+          }
+        }
+
+        // Distribute remaining amount to non-capped participants
+        if (availableForProRata > 0) {
+          const remainingParticipants = sortedShareClasses.filter(sc => 
+            sc.prefType === "participating" && 
+            (sc.cap === null || proRataAmounts.get(sc.id)! < sc.cap * transactions.find(t => t.shareClassId === sc.id)!.investment)
+          );
+
+          if (remainingParticipants.length > 0) {
+            const remainingShares = remainingParticipants.reduce((sum, sc) => {
+              const tx = transactions.find(t => t.shareClassId === sc.id);
+              return sum + (tx ? tx.shares : 0);
+            }, 0);
+
+            for (const sc of remainingParticipants) {
+              const tx = transactions.find(t => t.shareClassId === sc.id);
+              if (!tx) continue;
+
+              const additionalAmount = (tx.shares / remainingShares) * availableForProRata;
+              const currentAmount = proRataAmounts.get(sc.id) || 0;
+              proRataAmounts.set(sc.id, currentAmount + additionalAmount);
+            }
+          }
+        }
+
+        // Add participation amounts to data
+        Array.from(proRataAmounts.entries()).forEach(([shareClassId, amount]) => {
+          if (amount > 0) {
+            const sc = shareClasses.find(s => s.id === shareClassId);
+            if (!sc) return;
+            
             data.push({
               name: `${sc.name} Participation`,
               start: currentStep,
-              end: currentStep + participation,
-              amount: participation,
+              end: currentStep + amount,
+              amount: amount,
               type: 'participation'
             });
-            currentStep += participation;
+            currentStep += amount;
           }
-        }
+        });
       }
 
       return data;
     };
 
-    const waterfallSteps = calculateWaterfallData();
+    const waterfallSteps = calculateWaterfallData(shareClasses, transactions, exitAmount);
     const waterfallChartData = waterfallSteps.map(step => ({
       name: step.name,
       value: step.amount,
