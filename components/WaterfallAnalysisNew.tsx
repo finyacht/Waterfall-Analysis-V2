@@ -1,16 +1,12 @@
 'use client';
 
-import React from "react";
+import React, { useState } from "react";
 import { Card, CardContent } from "./ui/card";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
-import { Select, SelectTrigger, SelectContent, SelectItem, SelectValue } from "./ui/select";
 import { Label } from "./ui/label";
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ReferenceLine, Cell, LineChart, Line, ReferenceDot } from "recharts";
-import { formatNumber } from "@/utils/formatNumber";
-import { Plus } from "lucide-react";
 
-interface ShareClass {
+export interface ShareClass {
   id: number;
   name: string;
   seniority: number;
@@ -19,102 +15,54 @@ interface ShareClass {
   cap: number | null;
 }
 
-interface Transaction {
+export interface Transaction {
   id: number;
   shareClassId: number;
   shares: number;
   investment: number;
 }
 
-interface Component {
-  type: string;
-  amount: number;
-}
-
-interface ReturnData {
-  total: number;
-  components: Component[];
-}
-
-interface Returns {
-  [key: string]: ReturnData;
-}
-
-type SummaryData = {
-  name: string;
-  [key: string]: string | number;
-};
-
-interface WaterfallStepData {
-  name: string;
-  start: number;
-  end: number;
-  amount: number;
-  type: string;
-}
-
-interface ReturnPoint {
-  exitValue: number;
-  [key: string]: number;
-}
-
-interface TransactionSelectProps {
-  transaction: Transaction;
-  currentShareClass: ShareClass | undefined;
-  onShareClassChange: (shareClassId: number) => void;
-}
-
-function WaterfallAnalysisNew() {
-  const [shareClasses, setShareClasses] = React.useState<ShareClass[]>([
+export default function WaterfallAnalysisNew() {
+  const [shareClasses, setShareClasses] = useState<ShareClass[]>([
     { id: 1, name: "Series A", seniority: 1, liquidationPref: 1, prefType: "non-participating", cap: null },
     { id: 2, name: "Series B", seniority: 2, liquidationPref: 1.5, prefType: "participating", cap: 3 }
   ]);
 
-  const [transactions, setTransactions] = React.useState<Transaction[]>([
+  const [transactions, setTransactions] = useState<Transaction[]>([
     { id: 1, shareClassId: 1, shares: 1000000, investment: 1000000 },
     { id: 2, shareClassId: 2, shares: 500000, investment: 2000000 }
   ]);
 
-  const [exitAmount, setExitAmount] = React.useState<number>(10000000);
-  const [forceUpdateCounter, setForceUpdateCounter] = React.useState<number>(0);
-  
-  const getShareClassById = (id: number): ShareClass | undefined => 
-    shareClasses.find((sc: ShareClass) => sc.id === id);
+  const [exitAmount, setExitAmount] = useState<number>(10000000);
 
-  const updateTransaction = (id: number, field: keyof Transaction, value: number): void => {
-    setTransactions(prev => prev.map(tx => {
-      if (tx.id === id) {
-        return {
-          ...tx,
-          [field]: value
-        };
-      }
-      return tx;
-    }));
+  const formatNumber = (num: number): string => {
+    return new Intl.NumberFormat().format(num);
+  };
+
+  const updateTransaction = (id: number, field: keyof Transaction, value: number | string): void => {
+    setTransactions(prevTransactions => 
+      prevTransactions.map(tx => 
+        tx.id === id ? { ...tx, [field]: value } : tx
+      )
+    );
   };
 
   const deleteTransaction = (id: number): void => {
-    setTransactions(prev => prev.filter(tx => tx.id !== id));
+    setTransactions(prevTransactions => 
+      prevTransactions.filter(tx => tx.id !== id)
+    );
   };
 
-  const handleShareClassChange = (index: number, field: keyof ShareClass, value: any): void => {
-    const oldShareClass = shareClasses[index];
-    const newShareClasses = [...shareClasses];
-    
-    newShareClasses[index] = {
-      ...oldShareClass,
-      [field]: field === 'prefType' ? value as "non-participating" | "participating" :
-               field === 'cap' ? (value === null ? null : Number(value)) :
-               field === 'name' ? value :
-               Number(value) || 0
-    };
-    
-    setShareClasses(newShareClasses);
-
-    if (field === 'name') {
-      setTransactions([...transactions]);
-      setForceUpdateCounter(prev => prev + 1);
-    }
+  const addShareClass = (): void => {
+    const newId = Math.max(...shareClasses.map(sc => sc.id)) + 1;
+    setShareClasses([...shareClasses, {
+      id: newId,
+      name: `Series ${String.fromCharCode(65 + shareClasses.length)}`,
+      seniority: shareClasses.length + 1,
+      liquidationPref: 1,
+      prefType: "non-participating",
+      cap: null
+    }]);
   };
 
   const renderTransactionsTable = () => (
@@ -171,7 +119,10 @@ function WaterfallAnalysisNew() {
       <Card>
         <CardContent className="p-6">
           <div className="space-y-4">
-            <h2 className="text-xl font-semibold">Share Classes</h2>
+            <div className="flex justify-between items-center">
+              <h2 className="text-xl font-semibold">Share Classes</h2>
+              <Button onClick={addShareClass}>Add Share Class</Button>
+            </div>
             <div className="overflow-x-auto">
               {renderTransactionsTable()}
             </div>
@@ -202,5 +153,3 @@ function WaterfallAnalysisNew() {
     </div>
   );
 }
-
-export default WaterfallAnalysisNew;
