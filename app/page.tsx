@@ -1,13 +1,9 @@
-import dynamic from 'next/dynamic';
-
-const WaterfallAnalysis = dynamic(() => import('@/components/WaterfallAnalysisNew'), {
-  ssr: false
-});
+import WaterfallAnalysisNew from '@/components/WaterfallAnalysisNew'
 
 export default function Home() {
   return (
     <main className="min-h-screen">
-      <WaterfallAnalysis />
+      <WaterfallAnalysisNew />
     </main>
-  );
+  )
 } 

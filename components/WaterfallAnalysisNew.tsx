@@ -537,7 +537,7 @@ const WaterfallAnalysisNew = () => {
       <YAxis 
         tickFormatter={(value) => `$${formatNumber(value, 2)}`}
         width={110}
-        tickCount={8}
+        tickCount={10}
         label={{ 
           value: 'Return ($)', 
           angle: -90, 
@@ -545,6 +545,7 @@ const WaterfallAnalysisNew = () => {
           offset: -60
         }}
         tick={{ fontSize: 12 }}
+        domain={[0, 'auto']}
       />
       <Tooltip
         formatter={(value: any, name: string) => [`$${formatNumber(value, 2)}`, name]}
@@ -876,18 +877,6 @@ const WaterfallAnalysisNew = () => {
           </div>
 
           <div className="space-y-8">
-            {/* Summary Distribution */}
-            <div className="bg-white p-6 rounded-xl shadow-inner">
-              <h3 className="text-lg font-medium mb-4 text-gray-800">Summary Distribution</h3>
-              <div className="mt-4">
-                <div className="h-64 md:h-80">
-                  <ResponsiveContainer width="100%" height="100%">
-                    {renderBarChart()}
-                  </ResponsiveContainer>
-                </div>
-              </div>
-            </div>
-
             {/* Distribution Summary Table */}
             <div className="bg-white p-6 rounded-xl shadow-inner">
               <h3 className="text-lg font-medium mb-4 text-gray-800">Distribution Summary</h3>
@@ -897,7 +886,7 @@ const WaterfallAnalysisNew = () => {
                     <tr className="bg-gray-50">
                       <th className="text-left p-3 text-gray-600 font-medium rounded-l-lg">Share Class</th>
                       <th className="text-left p-3 text-gray-600 font-medium">Payout Amount</th>
-                      <th className="text-left p-3 text-gray-600 font-medium rounded-r-lg">Components</th>
+                      <th className="text-left p-3 text-gray-600 font-medium rounded-r-lg">Percentage</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -906,21 +895,69 @@ const WaterfallAnalysisNew = () => {
                         sc.name === className && 
                         transactions.some(tx => tx.shareClassId === sc.id)
                       ))
-                      .map(([className, value], index) => (
-                        <tr key={`${className}-${index}`} className={index % 2 === 0 ? 'bg-white' : 'bg-gray-50'}>
-                          <td className="p-3">{className}</td>
-                          <td className="p-3">${formatNumber(value.total, 2)}</td>
-                          <td className="p-3">
-                            {value.components.map((comp, i) => (
-                              <div key={`${className}-${i}`} className="text-sm text-gray-600">
-                                {comp.type}: ${formatNumber(comp.amount, 2)}
-                              </div>
-                            ))}
-                          </td>
-                        </tr>
-                      ))}
+                      .map(([className, value], index) => {
+                        const percentage = (value.total / exitAmount) * 100;
+                        return (
+                          <tr key={`${className}-${index}`} className={index % 2 === 0 ? 'bg-white' : 'bg-gray-50'}>
+                            <td className="p-3">{className}</td>
+                            <td className="p-3">${formatNumber(value.total, 2)}</td>
+                            <td className="p-3">{percentage.toFixed(2)}%</td>
+                          </tr>
+                        );
+                      })}
+                    <tr className="border-t-2 border-gray-200 font-semibold bg-gray-50">
+                      <td className="p-3">Total</td>
+                      <td className="p-3">${formatNumber(exitAmount, 2)}</td>
+                      <td className="p-3">100.00%</td>
+                    </tr>
                   </tbody>
                 </table>
+              </div>
+            </div>
+
+            {/* Summary Distribution Chart */}
+            <div className="bg-white p-6 rounded-xl shadow-inner">
+              <h3 className="text-lg font-medium mb-4 text-gray-800">Summary Distribution</h3>
+              <div className="mt-4">
+                <div className="h-[400px]">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart 
+                      data={summaryData}
+                      margin={{ top: 20, right: 30, left: 120, bottom: 20 }}
+                    >
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis dataKey="name" />
+                      <YAxis 
+                        tickFormatter={(value) => `$${formatNumber(value, 2)}`}
+                        width={110}
+                        tickCount={8}
+                        domain={[0, 'auto']}
+                      />
+                      <Tooltip 
+                        formatter={(value: any, name: string) => [`$${formatNumber(value, 2)}`, name]}
+                      />
+                      <Legend />
+                      {shareClasses
+                        .filter(sc => transactions.some(tx => tx.shareClassId === sc.id))
+                        .map((sc, index) => {
+                          const colors = [
+                            "#3b82f6", "#10b981", "#8b5cf6", "#f59e0b", "#ef4444",
+                            "#06b6d4", "#ec4899", "#14b8a6", "#f97316", "#6366f1"
+                          ];
+                          const name = getShareClassById(sc.id)?.name || '';
+                          return (
+                            <Bar
+                              key={`${sc.id}-${index}`}
+                              dataKey={name}
+                              name={name}
+                              stackId="a"
+                              fill={colors[index % colors.length]}
+                            />
+                          );
+                        })}
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
               </div>
             </div>
 
@@ -932,9 +969,87 @@ const WaterfallAnalysisNew = () => {
                   Return Analysis
                 </h2>
 
-                <div className="h-96 md:h-[600px]">
+                <div className="h-[500px]">
                   <ResponsiveContainer width="100%" height="100%">
-                    {renderLineChart()}
+                    <LineChart 
+                      data={chartData}
+                      margin={{ top: 50, right: 50, left: 120, bottom: 50 }}
+                    >
+                      <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+                      <XAxis 
+                        dataKey="exitValue" 
+                        tickFormatter={(value) => `$${formatNumber(value, 2)}`}
+                        interval="preserveStartEnd"
+                        minTickGap={100}
+                        height={60}
+                        label={{ 
+                          value: 'Exit Value ($)', 
+                          position: 'insideBottom',
+                          offset: -10
+                        }}
+                        tick={{ fontSize: 12 }}
+                      />
+                      <YAxis 
+                        tickFormatter={(value) => `$${formatNumber(value, 2)}`}
+                        width={110}
+                        tickCount={10}
+                        label={{ 
+                          value: 'Return ($)', 
+                          angle: -90, 
+                          position: 'insideLeft',
+                          offset: -60
+                        }}
+                        tick={{ fontSize: 12 }}
+                        domain={[0, 'auto']}
+                      />
+                      <Tooltip
+                        formatter={(value: any, name: string) => [`$${formatNumber(value, 2)}`, name]}
+                        labelFormatter={(value) => `Exit Value: $${formatNumber(value, 2)}`}
+                        cursor={{ strokeDasharray: '3 3' }}
+                      />
+                      <Legend 
+                        verticalAlign="top"
+                        height={50}
+                        wrapperStyle={{
+                          paddingTop: "0px",
+                          paddingBottom: "30px",
+                          fontSize: "14px"
+                        }}
+                      />
+                      {shareClasses
+                        .filter(sc => transactions.some(tx => tx.shareClassId === sc.id))
+                        .map((sc, index) => {
+                          const colors = [
+                            "#3b82f6", "#10b981", "#8b5cf6", "#f59e0b", "#ef4444",
+                            "#06b6d4", "#ec4899", "#14b8a6", "#f97316", "#6366f1"
+                          ];
+                          const name = getShareClassById(sc.id)?.name || '';
+                          return (
+                            <Line
+                              key={`${sc.id}-${index}`}
+                              type="monotone"
+                              dataKey={name}
+                              name={name}
+                              stroke={colors[index % colors.length]}
+                              strokeWidth={2}
+                              dot={{ r: 4 }}
+                              activeDot={{ r: 6, strokeWidth: 2 }}
+                            />
+                          );
+                        })}
+                      <ReferenceLine
+                        x={exitAmount}
+                        stroke="#000000"
+                        strokeWidth={2}
+                        label={{
+                          position: "top",
+                          value: `Current Exit: $${formatNumber(exitAmount, 2)}`,
+                          fill: "#000000",
+                          fontSize: 14,
+                          fontWeight: "bold"
+                        }}
+                      />
+                    </LineChart>
                   </ResponsiveContainer>
                 </div>
               </CardContent>
@@ -946,4 +1061,4 @@ const WaterfallAnalysisNew = () => {
   );
 };
 
-export default WaterfallAnalysisNew;  
+export default WaterfallAnalysisNew;
