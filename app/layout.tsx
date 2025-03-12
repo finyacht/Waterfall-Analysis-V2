@@ -3,11 +3,15 @@ import { Inter } from 'next/font/google'
 import './globals.css'
 import { Toaster } from '@/components/ui/toaster'
 
-const inter = Inter({ subsets: ['latin'] })
+const inter = Inter({
+  subsets: ['latin'],
+  display: 'swap',
+  variable: '--font-sans'
+})
 
 export const metadata: Metadata = {
   title: 'Waterfall Analysis',
-  description: 'A tool for analyzing waterfall returns in venture capital',
+  description: 'A modern tool for analyzing venture capital waterfall distributions',
 }
 
 export default function RootLayout({
@@ -16,8 +20,8 @@ export default function RootLayout({
   children: React.ReactNode
 }) {
   return (
-    <html lang="en">
-      <body className={inter.className}>
+    <html lang="en" suppressHydrationWarning>
+      <body className={`${inter.variable} font-sans antialiased`}>
         {children}
         <Toaster />
       </body>
