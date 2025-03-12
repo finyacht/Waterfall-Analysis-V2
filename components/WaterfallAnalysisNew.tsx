@@ -88,8 +88,8 @@ export default function WaterfallAnalysisNew() {
   const updateShareClass = (id: number, field: keyof ShareClass, value: ShareClass[keyof ShareClass]) => {
     setShareClasses(shareClasses.map(sc => {
       if (sc.id === id) {
-        if (field === 'prefType' && sc.prefType === 'participating' && value === 'non-participating') {
-          return sc;
+        if (field === 'prefType' && value === 'non-participating') {
+          return { ...sc, [field]: value, cap: null };
         }
         return { ...sc, [field]: value };
       }
@@ -155,49 +155,28 @@ export default function WaterfallAnalysisNew() {
         }
       }
 
-      // Calculate participation
+      // Calculate participation and remaining distribution
       if (remainingAmount > 0) {
-        const participatingClasses = sortedShareClasses.filter(sc => 
-          sc.prefType === "participating" || 
-          (sc.prefType === "non-participating" && sc.cap !== null)
-        );
-
-        const totalShares = transactions.reduce((sum, tx) => {
-          const sc = shareClasses.find(s => s.id === tx.shareClassId);
-          return sc?.prefType === "participating" ? sum + tx.shares : sum;
-        }, 0);
-
-        for (const sc of participatingClasses) {
+        const totalShares = transactions.reduce((sum, tx) => sum + tx.shares, 0);
+        
+        for (const sc of sortedShareClasses) {
           const tx = transactions.find(t => t.shareClassId === sc.id);
           if (!tx) continue;
 
-          const participation = (tx.shares / totalShares) * remainingAmount;
-          const maxParticipation = sc.cap ? tx.investment * (sc.cap - 1) : participation;
-          const actualParticipation = Math.min(participation, maxParticipation);
+          const shareRatio = tx.shares / totalShares;
+          const participation = shareRatio * remainingAmount;
 
-          if (actualParticipation > 0) {
+          if (participation > 0) {
             data.push({
               name: `${sc.name} Participation`,
               start: currentStep,
-              end: currentStep + actualParticipation,
-              amount: actualParticipation,
+              end: currentStep + participation,
+              amount: participation,
               type: 'participation'
             });
-            remainingAmount -= actualParticipation;
-            currentStep += actualParticipation;
+            currentStep += participation;
           }
         }
-      }
-
-      // Add remaining amount if any
-      if (remainingAmount > 0) {
-        data.push({
-          name: 'Remaining',
-          start: currentStep,
-          end: currentStep + remainingAmount,
-          amount: remainingAmount,
-          type: 'remaining'
-        });
       }
 
       return data;
@@ -207,9 +186,7 @@ export default function WaterfallAnalysisNew() {
     const waterfallChartData = waterfallSteps.map(step => ({
       name: step.name,
       value: step.amount,
-      color: step.type === 'liquidation' ? '#8884d8' : 
-             step.type === 'participation' ? '#82ca9d' : 
-             step.type === 'remaining' ? '#ffc658' : '#000000'
+      color: step.type === 'liquidation' ? '#8884d8' : '#82ca9d'
     }));
     setWaterfallData(waterfallChartData);
 
@@ -243,11 +220,13 @@ export default function WaterfallAnalysisNew() {
       const currentExit = minExit + (i * stepSize);
       const point: SensitivityDataPoint = { exitValue: currentExit };
       
+      const totalShares = transactions.reduce((sum, tx) => sum + tx.shares, 0);
+      let remainingAmount = currentExit;
+
       shareClasses.forEach(sc => {
         const tx = transactions.find(t => t.shareClassId === sc.id);
         if (!tx) return;
 
-        let remainingAmount = currentExit;
         let shareClassReturn = 0;
 
         // Calculate liquidation preference
@@ -260,12 +239,11 @@ export default function WaterfallAnalysisNew() {
           remainingAmount = 0;
         }
 
-        // Calculate participation if applicable
-        if (remainingAmount > 0 && (sc.prefType === "participating" || (sc.prefType === "non-participating" && sc.cap !== null))) {
-          const totalShares = transactions.reduce((sum, t) => sum + t.shares, 0);
-          const participation = (tx.shares / totalShares) * remainingAmount;
-          const maxParticipation = sc.cap ? tx.investment * (sc.cap - 1) : participation;
-          shareClassReturn += Math.min(participation, maxParticipation);
+        // Calculate participation
+        if (remainingAmount > 0) {
+          const shareRatio = tx.shares / totalShares;
+          const participation = shareRatio * remainingAmount;
+          shareClassReturn += participation;
         }
 
         point[sc.name] = shareClassReturn / tx.investment;
@@ -480,9 +458,7 @@ export default function WaterfallAnalysisNew() {
                       dataKey="name" 
                       tick={{ fill: '#4B5563' }}
                       interval={0}
-                      angle={-45}
-                      textAnchor="end"
-                      height={80}
+                      height={40}
                     />
                     <YAxis 
                       tickFormatter={(value) => `$${formatNumber(value)}`}
@@ -523,7 +499,11 @@ export default function WaterfallAnalysisNew() {
                       formatter={(value: number) => `${value.toFixed(2)}x`}
                       contentStyle={{ backgroundColor: 'white', border: '1px solid #E5E7EB' }}
                     />
-                    <Bar dataKey="value" fill="#4F46E5" />
+                    <Bar dataKey="value" fill="#4F46E5">
+                      {returnData.map((entry, index) => (
+                        <Cell key={`cell-${index}`} fill={['#4F46E5', '#82ca9d', '#ffc658', '#ff7300'][index % 4]} />
+                      ))}
+                    </Bar>
                   </BarChart>
                 </ResponsiveContainer>
               </div>
