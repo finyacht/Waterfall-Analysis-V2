@@ -125,7 +125,10 @@ const calculateWaterfallData = (
   const sortedShareClasses = [...shareClasses].sort((a, b) => {
     if (a.type === 'common' && b.type === 'preferred') return 1;
     if (a.type === 'preferred' && b.type === 'common') return -1;
-    return a.seniority - b.seniority;
+    if (a.type === 'preferred' && b.type === 'preferred') {
+      return b.seniority - a.seniority; // Higher seniority gets paid first
+    }
+    return 0;
   });
 
   // First round: Pay liquidation preferences in order of seniority
@@ -163,20 +166,17 @@ const calculateWaterfallData = (
     // Calculate total participating shares
     const totalParticipatingShares = transactions.reduce((sum, tx) => {
       const sc = shareClasses.find(s => s.id === tx.shareClassId);
-      if (sc && (
-        sc.type === 'common' || 
-        (sc.type === 'preferred' && sc.prefType === 'participating')
-      )) {
+      if (!sc) return sum;
+      if (sc.type === 'common' || (sc.type === 'preferred' && sc.prefType === 'participating')) {
         return sum + tx.shares;
       }
       return sum;
     }, 0);
 
-    // Calculate initial pro-rata amounts for all participating shares
+    // First pass: Calculate initial pro-rata amounts and identify excess due to caps
     const proRataAmounts = new Map<number, number>();
     let availableForRedistribution = 0;
 
-    // First pass: Calculate initial pro-rata amounts and identify excess due to caps
     for (const sc of sortedShareClasses) {
       const tx = transactions.find(t => t.shareClassId === sc.id);
       if (!tx) continue;
@@ -186,13 +186,12 @@ const calculateWaterfallData = (
         let proRataAmount = shareRatio * remainingAmount;
 
         if (sc.type === 'preferred' && sc.cap !== null) {
-          // Calculate total received so far (liquidation preference)
+          // Calculate total received including liquidation preference
           const totalReceivedSoFar = data
             .filter(step => step.name.includes(sc.name))
             .reduce((sum, step) => sum + step.amount, 0);
 
-          // Calculate maximum additional amount allowed by cap
-          const maxTotal = sc.cap * tx.investment;
+          const maxTotal = tx.investment * sc.cap;
           const maxAdditional = Math.max(0, maxTotal - totalReceivedSoFar);
 
           if (proRataAmount > maxAdditional) {
@@ -211,10 +210,9 @@ const calculateWaterfallData = (
     if (availableForRedistribution > 0) {
       const uncappedShares = transactions.reduce((sum, tx) => {
         const sc = shareClasses.find(s => s.id === tx.shareClassId);
-        if (sc && (
-          sc.type === 'common' || 
-          (sc.type === 'preferred' && sc.prefType === 'participating' && sc.cap === null)
-        )) {
+        if (!sc) return sum;
+        if (sc.type === 'common' || 
+            (sc.type === 'preferred' && sc.prefType === 'participating' && sc.cap === null)) {
           return sum + tx.shares;
         }
         return sum;
@@ -330,6 +328,8 @@ export default function WaterfallAnalysisNew() {
     if (shareClasses.length === 0 || transactions.length === 0) return;
 
     const waterfallSteps = calculateWaterfallData(shareClasses, transactions, exitAmount);
+    
+    // Transform waterfall steps into chart data with clearer labels
     const waterfallChartData = waterfallSteps.map(step => ({
       name: step.name,
       value: step.amount,
@@ -339,31 +339,27 @@ export default function WaterfallAnalysisNew() {
     }));
     setWaterfallData(waterfallChartData);
 
-    // Calculate returns
+    // Calculate returns with more precise numbers
     const returnsData = shareClasses.map(sc => {
       const tx = transactions.find(t => t.shareClassId === sc.id);
       if (!tx) return null;
 
-      const totalReturn = waterfallSteps.reduce((sum, step) => {
-        if (step.name.includes(sc.name)) {
-          return sum + step.amount;
-        }
-        return sum;
-      }, 0);
+      const totalReturn = waterfallSteps
+        .filter(step => step.name.includes(sc.name))
+        .reduce((sum, step) => sum + step.amount, 0);
 
       return {
-        name: sc.name,
+        name: `${sc.name} (${(totalReturn / tx.investment).toFixed(2)}x)`,
         value: totalReturn / tx.investment
       };
     }).filter((data): data is ReturnDataPoint => data !== null);
-
     setReturnData(returnsData);
 
-    // Calculate sensitivity data with multiple exit points
+    // Calculate sensitivity data with more granular steps
     const maxInvestment = Math.max(...transactions.map(tx => tx.investment));
     const minExit = maxInvestment * 0.5;
-    const maxExit = maxInvestment * 5; // Show up to 5x of largest investment
-    const steps = 50; // More granular steps
+    const maxExit = maxInvestment * 5;
+    const steps = 50;
     const stepSize = (maxExit - minExit) / steps;
 
     const sensitivityPoints = Array.from({ length: steps + 1 }, (_, i) => {
@@ -376,12 +372,9 @@ export default function WaterfallAnalysisNew() {
         const tx = transactions.find(t => t.shareClassId === sc.id);
         if (!tx) return;
 
-        const totalReturn = waterfallAtExit.reduce((sum, step) => {
-          if (step.name.includes(sc.name)) {
-            return sum + step.amount;
-          }
-          return sum;
-        }, 0);
+        const totalReturn = waterfallAtExit
+          .filter(step => step.name.includes(sc.name))
+          .reduce((sum, step) => sum + step.amount, 0);
 
         point[sc.name] = totalReturn / tx.investment;
       });
@@ -610,14 +603,16 @@ export default function WaterfallAnalysisNew() {
                       dataKey="name" 
                       tick={{ fill: '#4B5563' }}
                       interval={0}
-                      height={40}
+                      height={60}
+                      angle={-45}
+                      textAnchor="end"
                     />
                     <YAxis 
                       tickFormatter={(value) => `$${formatNumber(value)}`}
                       tick={{ fill: '#4B5563' }}
                     />
                     <Tooltip 
-                      formatter={(value: number) => `$${formatNumber(value)}`}
+                      formatter={(value: number) => [`$${formatNumber(value)}`, "Amount"]}
                       contentStyle={{ backgroundColor: 'white', border: '1px solid #E5E7EB' }}
                     />
                     <Bar dataKey="value" fill="#4F46E5">
