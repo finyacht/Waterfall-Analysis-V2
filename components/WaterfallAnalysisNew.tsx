@@ -65,6 +65,93 @@ export default function WaterfallAnalysisNew() {
     }]);
   };
 
+  const deleteShareClass = (id: number): void => {
+    setShareClasses(shareClasses.filter(sc => sc.id !== id));
+    setTransactions(transactions.filter(tx => tx.shareClassId !== id));
+  };
+
+  const addTransaction = (): void => {
+    const newId = Math.max(...transactions.map(tx => tx.id), 0) + 1;
+    const defaultShareClassId = shareClasses[0]?.id || 0;
+    
+    setTransactions([...transactions, {
+      id: newId,
+      shareClassId: defaultShareClassId,
+      shares: 0,
+      investment: 0
+    }]);
+  };
+
+  const updateShareClass = (id: number, field: keyof ShareClass, value: string | number | null): void => {
+    setShareClasses(prevShareClasses => 
+      prevShareClasses.map(sc => 
+        sc.id === id ? { ...sc, [field]: value } : sc
+      )
+    );
+  };
+
+  const renderShareClassesTable = () => (
+    <table className="w-full min-w-[800px]">
+      <thead>
+        <tr className="bg-gray-50">
+          <th className="text-left p-3 text-gray-600 font-medium">Name</th>
+          <th className="text-left p-3 text-gray-600 font-medium">Seniority</th>
+          <th className="text-left p-3 text-gray-600 font-medium">Liquidation Preference</th>
+          <th className="text-left p-3 text-gray-600 font-medium">Type</th>
+          <th className="text-left p-3 text-gray-600 font-medium">Cap</th>
+          <th className="text-left p-3 text-gray-600 font-medium">Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {shareClasses.map((sc) => (
+          <tr key={sc.id}>
+            <td className="p-3">
+              <Input
+                type="text"
+                value={sc.name}
+                onChange={(e) => updateShareClass(sc.id, 'name', e.target.value)}
+              />
+            </td>
+            <td className="p-3">
+              <Input
+                type="number"
+                value={sc.seniority}
+                onChange={(e) => updateShareClass(sc.id, 'seniority', parseInt(e.target.value))}
+              />
+            </td>
+            <td className="p-3">
+              <Input
+                type="number"
+                value={sc.liquidationPref}
+                onChange={(e) => updateShareClass(sc.id, 'liquidationPref', parseFloat(e.target.value))}
+              />
+            </td>
+            <td className="p-3">
+              <select
+                value={sc.prefType}
+                onChange={(e) => updateShareClass(sc.id, 'prefType', e.target.value as "non-participating" | "participating")}
+                className="w-full"
+              >
+                <option value="non-participating">Non-Participating</option>
+                <option value="participating">Participating</option>
+              </select>
+            </td>
+            <td className="p-3">
+              <Input
+                type="number"
+                value={sc.cap === null ? '' : sc.cap}
+                onChange={(e) => updateShareClass(sc.id, 'cap', e.target.value === '' ? null : parseFloat(e.target.value))}
+              />
+            </td>
+            <td className="p-3">
+              <Button variant="destructive" onClick={() => deleteShareClass(sc.id)}>Delete</Button>
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+
   const renderTransactionsTable = () => (
     <table className="w-full min-w-[800px]">
       <thead>
@@ -122,6 +209,20 @@ export default function WaterfallAnalysisNew() {
             <div className="flex justify-between items-center">
               <h2 className="text-xl font-semibold">Share Classes</h2>
               <Button onClick={addShareClass}>Add Share Class</Button>
+            </div>
+            <div className="overflow-x-auto">
+              {renderShareClassesTable()}
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardContent className="p-6">
+          <div className="space-y-4">
+            <div className="flex justify-between items-center">
+              <h2 className="text-xl font-semibold">Transactions</h2>
+              <Button onClick={addTransaction}>Add Transaction</Button>
             </div>
             <div className="overflow-x-auto">
               {renderTransactionsTable()}
