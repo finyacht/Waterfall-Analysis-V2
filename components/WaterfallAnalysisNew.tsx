@@ -73,6 +73,33 @@ interface SensitivityDataPoint {
 }
 
 /**
+ * IMPORTANT CALCULATION NOTES:
+ * Based on the example case with $10M exit:
+ * Series A ($1M investment) - participating
+ * Series B ($2M investment, 1.5x pref) - non-participating
+ * 
+ * Expected Distribution:
+ * 1. First Round - Liquidation Preferences:
+ *    - Series B gets: $3M (1.5x of $2M)
+ *    - Series A gets: $1M (1x of $1M)
+ *    - Remaining: $6M
+ * 
+ * 2. Second Round - Pro-rata Participation:
+ *    - Series A participates in remaining $6M (Series B doesn't as it's non-participating)
+ *    - Series A gets: Additional $6M
+ *    - Total distribution:
+ *      * Series A: $7M total ($1M pref + $6M participation) = 7.0x return
+ *      * Series B: $3M total (just liquidation pref) = 1.5x return
+ * 
+ * This matches the expected distribution table:
+ * | Share Class | Investment | Liquidation | Participation | Total Return | Multiple | % of Total |
+ * |-------------|------------|-------------|---------------|--------------|----------|------------|
+ * | Series A    | $1.00M     | $1.00M      | $6.00M        | $7.00M       | 7.00x    | 70.0%      |
+ * | Series B    | $2.00M     | $3.00M      | $0.00M        | $3.00M       | 1.50x    | 30.0%      |
+ * | Total       | $3.00M     | $4.00M      | $6.00M        | $10.00M      | -        | 100%       |
+ */
+
+/**
  * Calculates the waterfall distribution based on share classes and their preferences.
  * 
  * Distribution Logic:
@@ -121,12 +148,12 @@ const calculateWaterfallData = (
   let remainingAmount = exitAmount;
   let currentStep = 0;
 
-  // Sort share classes by seniority (preferred shares sorted by seniority, common shares last)
+  // Sort share classes by seniority (higher seniority first)
   const sortedShareClasses = [...shareClasses].sort((a, b) => {
     if (a.type === 'common' && b.type === 'preferred') return 1;
     if (a.type === 'preferred' && b.type === 'common') return -1;
     if (a.type === 'preferred' && b.type === 'preferred') {
-      return b.seniority - a.seniority; // Higher seniority gets paid first
+      return b.seniority - a.seniority;
     }
     return 0;
   });
@@ -163,34 +190,39 @@ const calculateWaterfallData = (
 
   // Second round: Pro-rata participation if there's remaining amount
   if (remainingAmount > 0) {
-    // Calculate total participating shares
+    // Calculate total participating shares (including both participating preferred and common)
     const totalParticipatingShares = transactions.reduce((sum, tx) => {
       const sc = shareClasses.find(s => s.id === tx.shareClassId);
       if (!sc) return sum;
+      // Include shares from common and participating preferred
       if (sc.type === 'common' || (sc.type === 'preferred' && sc.prefType === 'participating')) {
         return sum + tx.shares;
       }
       return sum;
     }, 0);
 
-    // First pass: Calculate initial pro-rata amounts and identify excess due to caps
+    // First pass: Calculate initial pro-rata amounts
     const proRataAmounts = new Map<number, number>();
     let availableForRedistribution = 0;
 
+    // Calculate initial pro-rata amounts for all participating shares
     for (const sc of sortedShareClasses) {
       const tx = transactions.find(t => t.shareClassId === sc.id);
       if (!tx) continue;
 
+      // Include both common shares and participating preferred shares
       if (sc.type === 'common' || (sc.type === 'preferred' && sc.prefType === 'participating')) {
         const shareRatio = tx.shares / totalParticipatingShares;
         let proRataAmount = shareRatio * remainingAmount;
 
+        // Check caps for participating preferred shares
         if (sc.type === 'preferred' && sc.cap !== null) {
           // Calculate total received including liquidation preference
           const totalReceivedSoFar = data
             .filter(step => step.name.includes(sc.name))
             .reduce((sum, step) => sum + step.amount, 0);
 
+          // Calculate maximum allowed by cap
           const maxTotal = tx.investment * sc.cap;
           const maxAdditional = Math.max(0, maxTotal - totalReceivedSoFar);
 
@@ -211,6 +243,7 @@ const calculateWaterfallData = (
       const uncappedShares = transactions.reduce((sum, tx) => {
         const sc = shareClasses.find(s => s.id === tx.shareClassId);
         if (!sc) return sum;
+        // Only count shares from uncapped participants
         if (sc.type === 'common' || 
             (sc.type === 'preferred' && sc.prefType === 'participating' && sc.cap === null)) {
           return sum + tx.shares;
@@ -219,11 +252,12 @@ const calculateWaterfallData = (
       }, 0);
 
       if (uncappedShares > 0) {
+        // Redistribute excess proportionally to uncapped participants
         for (const sc of sortedShareClasses) {
           const tx = transactions.find(t => t.shareClassId === sc.id);
           if (!tx) continue;
 
-          if ((sc.type === 'common') || 
+          if (sc.type === 'common' || 
               (sc.type === 'preferred' && sc.prefType === 'participating' && sc.cap === null)) {
             const shareRatio = tx.shares / uncappedShares;
             const additionalAmount = shareRatio * availableForRedistribution;
@@ -562,16 +596,18 @@ export default function WaterfallAnalysisNew() {
           </div>
 
           <div className="bg-white rounded-lg shadow-md p-6">
-            <div className="flex justify-between items-center mb-6">
+            <div className="flex justify-between items-center mb-6 w-full">
               <h2 className="text-2xl font-semibold text-gray-800">Transactions</h2>
               <Button 
                 onClick={addTransaction}
-                className="bg-blue-600 hover:bg-blue-700 text-white"
+                className="bg-blue-600 hover:bg-blue-700 text-white whitespace-nowrap"
               >
                 Add Transaction
               </Button>
             </div>
-            {renderTransactionsTable()}
+            <div className="w-full">
+              {renderTransactionsTable()}
+            </div>
           </div>
 
           <div className="bg-white rounded-lg shadow-md p-6">
