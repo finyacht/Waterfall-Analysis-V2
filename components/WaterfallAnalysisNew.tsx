@@ -6,6 +6,9 @@ import { Card, CardContent } from "./ui/card";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
+import { Select, SelectTrigger, SelectContent, SelectItem, SelectValue } from "./ui/select";
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ReferenceLine, Cell, LineChart, Line, ReferenceDot } from "recharts";
+import { Plus } from "lucide-react";
 
 export interface ShareClass {
   id: number;
@@ -21,6 +24,38 @@ export interface Transaction {
   shareClassId: number;
   shares: number;
   investment: number;
+}
+
+interface Component {
+  type: string;
+  amount: number;
+}
+
+interface ReturnData {
+  total: number;
+  components: Component[];
+}
+
+interface Returns {
+  [key: string]: ReturnData;
+}
+
+type SummaryData = {
+  name: string;
+  [key: string]: string | number;
+};
+
+interface WaterfallStepData {
+  name: string;
+  start: number;
+  end: number;
+  amount: number;
+  type: string;
+}
+
+interface ReturnPoint {
+  exitValue: number;
+  [key: string]: number;
 }
 
 export default function WaterfallAnalysisNew() {
@@ -89,6 +124,144 @@ export default function WaterfallAnalysisNew() {
         sc.id === id ? { ...sc, [field]: value } : sc
       )
     );
+  };
+
+  const getShareClassColor = (id: number): string => {
+    const colors = ['#8884d8', '#82ca9d', '#ffc658', '#ff7300', '#ff0000'];
+    return colors[id % colors.length];
+  };
+
+  const getBarColor = (type: string): string => {
+    const colors: { [key: string]: string } = {
+      'investment': '#82ca9d',
+      'liquidation': '#8884d8',
+      'participation': '#ffc658',
+      'remaining': '#ff7300'
+    };
+    return colors[type] || '#000000';
+  };
+
+  const calculateWaterfallData = (): WaterfallStepData[] => {
+    const data: WaterfallStepData[] = [];
+    let remainingAmount = exitAmount;
+    let currentStep = 0;
+
+    // Sort share classes by seniority
+    const sortedShareClasses = [...shareClasses].sort((a, b) => a.seniority - b.seniority);
+
+    // Calculate liquidation preferences
+    for (const sc of sortedShareClasses) {
+      const tx = transactions.find(t => t.shareClassId === sc.id);
+      if (!tx) continue;
+
+      const liquidationPref = tx.investment * sc.liquidationPref;
+      if (remainingAmount >= liquidationPref) {
+        data.push({
+          name: `${sc.name} Liquidation`,
+          start: currentStep,
+          end: currentStep + liquidationPref,
+          amount: liquidationPref,
+          type: 'liquidation'
+        });
+        remainingAmount -= liquidationPref;
+        currentStep += liquidationPref;
+      } else {
+        data.push({
+          name: `${sc.name} Liquidation`,
+          start: currentStep,
+          end: currentStep + remainingAmount,
+          amount: remainingAmount,
+          type: 'liquidation'
+        });
+        remainingAmount = 0;
+        break;
+      }
+    }
+
+    // Calculate participation
+    if (remainingAmount > 0) {
+      const participatingClasses = sortedShareClasses.filter(sc => 
+        sc.prefType === "participating" || 
+        (sc.prefType === "non-participating" && sc.cap !== null)
+      );
+
+      const totalShares = transactions.reduce((sum, tx) => {
+        const sc = shareClasses.find(s => s.id === tx.shareClassId);
+        return sc?.prefType === "participating" ? sum + tx.shares : sum;
+      }, 0);
+
+      for (const sc of participatingClasses) {
+        const tx = transactions.find(t => t.shareClassId === sc.id);
+        if (!tx) continue;
+
+        const participation = (tx.shares / totalShares) * remainingAmount;
+        const maxParticipation = sc.cap ? tx.investment * (sc.cap - 1) : participation;
+        const actualParticipation = Math.min(participation, maxParticipation);
+
+        if (actualParticipation > 0) {
+          data.push({
+            name: `${sc.name} Participation`,
+            start: currentStep,
+            end: currentStep + actualParticipation,
+            amount: actualParticipation,
+            type: 'participation'
+          });
+          remainingAmount -= actualParticipation;
+          currentStep += actualParticipation;
+        }
+      }
+    }
+
+    // Add remaining amount if any
+    if (remainingAmount > 0) {
+      data.push({
+        name: 'Remaining',
+        start: currentStep,
+        end: currentStep + remainingAmount,
+        amount: remainingAmount,
+        type: 'remaining'
+      });
+    }
+
+    return data;
+  };
+
+  const calculateReturnsData = (): ReturnPoint[] => {
+    const exitValues = Array.from({ length: 20 }, (_, i) => exitAmount * (i + 1) / 10);
+    return exitValues.map(value => {
+      const returns: ReturnPoint = { exitValue: value };
+      
+      let remainingAmount = value;
+      const sortedShareClasses = [...shareClasses].sort((a, b) => a.seniority - b.seniority);
+
+      // Calculate liquidation preferences
+      for (const sc of sortedShareClasses) {
+        const tx = transactions.find(t => t.shareClassId === sc.id);
+        if (!tx) continue;
+
+        const liquidationPref = tx.investment * sc.liquidationPref;
+        returns[sc.name] = Math.min(remainingAmount, liquidationPref);
+        remainingAmount -= returns[sc.name];
+      }
+
+      // Calculate participation
+      if (remainingAmount > 0) {
+        const totalShares = transactions.reduce((sum, tx) => sum + tx.shares, 0);
+        
+        for (const sc of sortedShareClasses) {
+          const tx = transactions.find(t => t.shareClassId === sc.id);
+          if (!tx) continue;
+
+          if (sc.prefType === "participating" || (sc.prefType === "non-participating" && sc.cap !== null)) {
+            const participation = (tx.shares / totalShares) * remainingAmount;
+            const maxParticipation = sc.cap ? tx.investment * (sc.cap - 1) : participation;
+            returns[sc.name] += Math.min(participation, maxParticipation);
+          }
+        }
+      }
+
+      return returns;
+    });
   };
 
   const renderShareClassesTable = () => (
@@ -248,6 +421,77 @@ export default function WaterfallAnalysisNew() {
                 }}
                 className="w-[200px]"
               />
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardContent className="p-6">
+          <div className="space-y-4">
+            <h2 className="text-xl font-semibold">Waterfall Chart</h2>
+            <div className="h-[400px]">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart
+                  data={calculateWaterfallData()}
+                  margin={{ top: 20, right: 30, left: 20, bottom: 5 }}
+                >
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="name" />
+                  <YAxis />
+                  <Tooltip formatter={(value) => formatNumber(value as number)} />
+                  <Legend />
+                  <Bar dataKey="amount" fill="#8884d8">
+                    {calculateWaterfallData().map((entry, index) => (
+                      <Cell key={`cell-${index}`} fill={getBarColor(entry.type)} />
+                    ))}
+                  </Bar>
+                  <ReferenceLine y={0} stroke="#000" />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardContent className="p-6">
+          <div className="space-y-4">
+            <h2 className="text-xl font-semibold">Returns Chart</h2>
+            <div className="h-[400px]">
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart
+                  data={calculateReturnsData()}
+                  margin={{ top: 20, right: 30, left: 20, bottom: 5 }}
+                >
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis 
+                    dataKey="exitValue" 
+                    type="number"
+                    tickFormatter={(value) => formatNumber(value)}
+                  />
+                  <YAxis />
+                  <Tooltip 
+                    formatter={(value) => formatNumber(value as number)}
+                    labelFormatter={(value) => `Exit Value: $${formatNumber(value as number)}`}
+                  />
+                  <Legend />
+                  {shareClasses.map((sc) => (
+                    <Line
+                      key={sc.id}
+                      type="monotone"
+                      dataKey={sc.name}
+                      stroke={getShareClassColor(sc.id)}
+                      dot={false}
+                    />
+                  ))}
+                  <ReferenceLine
+                    x={exitAmount}
+                    stroke="red"
+                    label="Current Exit"
+                  />
+                </LineChart>
+              </ResponsiveContainer>
             </div>
           </div>
         </CardContent>
