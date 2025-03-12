@@ -175,60 +175,45 @@ const calculateWaterfallData = (
       });
       remainingAmount -= liquidationPref;
       currentStep += liquidationPref;
-    } else if (remainingAmount > 0) {
-      data.push({
-        name: `${sc.name} Liquidation (Partial)`,
-        start: currentStep,
-        end: currentStep + remainingAmount,
-        amount: remainingAmount,
-        type: 'liquidation'
-      });
-      remainingAmount = 0;
-      currentStep += remainingAmount;
     }
   }
 
   // Second round: Pro-rata participation if there's remaining amount
   if (remainingAmount > 0) {
-    // Calculate total participating shares (including both participating preferred and common)
+    // Calculate total participating shares
     const totalParticipatingShares = transactions.reduce((sum, tx) => {
       const sc = shareClasses.find(s => s.id === tx.shareClassId);
       if (!sc) return sum;
-      // Include shares from common and participating preferred
       if (sc.type === 'common' || (sc.type === 'preferred' && sc.prefType === 'participating')) {
         return sum + tx.shares;
       }
       return sum;
     }, 0);
 
-    // First pass: Calculate initial pro-rata amounts
+    // Calculate initial pro-rata amounts for participating shares
     const proRataAmounts = new Map<number, number>();
     let availableForRedistribution = 0;
 
-    // Calculate initial pro-rata amounts for all participating shares
     for (const sc of sortedShareClasses) {
       const tx = transactions.find(t => t.shareClassId === sc.id);
       if (!tx) continue;
 
-      // Include both common shares and participating preferred shares
       if (sc.type === 'common' || (sc.type === 'preferred' && sc.prefType === 'participating')) {
         const shareRatio = tx.shares / totalParticipatingShares;
         let proRataAmount = shareRatio * remainingAmount;
 
         // Check caps for participating preferred shares
         if (sc.type === 'preferred' && sc.cap !== null) {
-          // Calculate total received including liquidation preference
-          const totalReceivedSoFar = data
+          const liquidationAmount = data
             .filter(step => step.name.includes(sc.name))
             .reduce((sum, step) => sum + step.amount, 0);
-
-          // Calculate maximum allowed by cap
-          const maxTotal = tx.investment * sc.cap;
-          const maxAdditional = Math.max(0, maxTotal - totalReceivedSoFar);
-
-          if (proRataAmount > maxAdditional) {
-            availableForRedistribution += (proRataAmount - maxAdditional);
-            proRataAmount = maxAdditional;
+          
+          const maxAllowed = tx.investment * sc.cap;
+          const maxAdditionalAllowed = maxAllowed - liquidationAmount;
+          
+          if (proRataAmount > maxAdditionalAllowed) {
+            availableForRedistribution += (proRataAmount - maxAdditionalAllowed);
+            proRataAmount = maxAdditionalAllowed;
           }
         }
 
@@ -238,12 +223,11 @@ const calculateWaterfallData = (
       }
     }
 
-    // Second pass: Redistribute excess to uncapped participants
+    // Redistribute excess to uncapped participants
     if (availableForRedistribution > 0) {
       const uncappedShares = transactions.reduce((sum, tx) => {
         const sc = shareClasses.find(s => s.id === tx.shareClassId);
         if (!sc) return sum;
-        // Only count shares from uncapped participants
         if (sc.type === 'common' || 
             (sc.type === 'preferred' && sc.prefType === 'participating' && sc.cap === null)) {
           return sum + tx.shares;
@@ -252,7 +236,6 @@ const calculateWaterfallData = (
       }, 0);
 
       if (uncappedShares > 0) {
-        // Redistribute excess proportionally to uncapped participants
         for (const sc of sortedShareClasses) {
           const tx = transactions.find(t => t.shareClassId === sc.id);
           if (!tx) continue;
@@ -519,60 +502,71 @@ export default function WaterfallAnalysisNew() {
   );
 
   const renderTransactionsTable = () => (
-    <div className="overflow-x-auto rounded-lg border border-gray-200">
-      <table className="w-full min-w-[800px] border-collapse">
-        <thead>
-          <tr>
-            <th className="text-left p-4 bg-gray-50 text-gray-600 font-semibold border-b w-[40%]">Share Class</th>
-            <th className="text-left p-4 bg-gray-50 text-gray-600 font-semibold border-b w-[25%]">Shares</th>
-            <th className="text-left p-4 bg-gray-50 text-gray-600 font-semibold border-b w-[25%]">Investment</th>
-            <th className="text-left p-4 bg-gray-50 text-gray-600 font-semibold border-b w-[10%]">Actions</th>
-          </tr>
-        </thead>
-        <tbody>
-          {transactions.map((tx) => (
-            <tr key={tx.id} className="border-b last:border-b-0 hover:bg-gray-50">
-              <td className="p-4">
-                <select
-                  value={tx.shareClassId}
-                  onChange={(e) => updateTransaction(tx.id, 'shareClassId', parseInt(e.target.value))}
-                  className="w-full h-9 rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-1 focus:ring-ring"
-                >
-                  {shareClasses.map((sc) => (
-                    <option key={sc.id} value={sc.id}>{sc.name}</option>
-                  ))}
-                </select>
-              </td>
-              <td className="p-4">
-                <Input
-                  type="text"
-                  value={formatNumber(tx.shares)}
-                  onChange={(e) => updateTransaction(tx.id, 'shares', parseFloat(e.target.value.replace(/[^0-9]/g, '')))}
-                  className="w-full"
-                />
-              </td>
-              <td className="p-4">
-                <Input
-                  type="text"
-                  value={formatNumber(tx.investment)}
-                  onChange={(e) => updateTransaction(tx.id, 'investment', parseFloat(e.target.value.replace(/[^0-9]/g, '')))}
-                  className="w-full"
-                />
-              </td>
-              <td className="p-4">
-                <Button 
-                  variant="destructive" 
-                  size="sm" 
-                  onClick={() => deleteTransaction(tx.id)}
-                  className="bg-red-600 hover:bg-red-700 text-white"
-                >
-                  Delete
-                </Button>
-              </td>
+    <div className="w-full">
+      <div className="flex justify-between items-center mb-6">
+        <h2 className="text-2xl font-semibold text-gray-800">Transactions</h2>
+        <Button 
+          onClick={addTransaction}
+          className="bg-blue-600 hover:bg-blue-700 text-white whitespace-nowrap"
+        >
+          Add Transaction
+        </Button>
+      </div>
+      <div className="overflow-x-auto rounded-lg border border-gray-200">
+        <table className="w-full min-w-[800px] border-collapse">
+          <thead>
+            <tr>
+              <th className="text-left p-4 bg-gray-50 text-gray-600 font-semibold border-b w-[40%]">Share Class</th>
+              <th className="text-left p-4 bg-gray-50 text-gray-600 font-semibold border-b w-[25%]">Shares</th>
+              <th className="text-left p-4 bg-gray-50 text-gray-600 font-semibold border-b w-[25%]">Investment</th>
+              <th className="text-left p-4 bg-gray-50 text-gray-600 font-semibold border-b w-[10%]">Actions</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {transactions.map((tx) => (
+              <tr key={tx.id} className="border-b last:border-b-0 hover:bg-gray-50">
+                <td className="p-4">
+                  <select
+                    value={tx.shareClassId}
+                    onChange={(e) => updateTransaction(tx.id, 'shareClassId', parseInt(e.target.value))}
+                    className="w-full h-9 rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-1 focus:ring-ring"
+                  >
+                    {shareClasses.map((sc) => (
+                      <option key={sc.id} value={sc.id}>{sc.name}</option>
+                    ))}
+                  </select>
+                </td>
+                <td className="p-4">
+                  <Input
+                    type="text"
+                    value={formatNumber(tx.shares)}
+                    onChange={(e) => updateTransaction(tx.id, 'shares', parseFloat(e.target.value.replace(/[^0-9]/g, '')))}
+                    className="w-full"
+                  />
+                </td>
+                <td className="p-4">
+                  <Input
+                    type="text"
+                    value={formatNumber(tx.investment)}
+                    onChange={(e) => updateTransaction(tx.id, 'investment', parseFloat(e.target.value.replace(/[^0-9]/g, '')))}
+                    className="w-full"
+                  />
+                </td>
+                <td className="p-4">
+                  <Button 
+                    variant="destructive" 
+                    size="sm" 
+                    onClick={() => deleteTransaction(tx.id)}
+                    className="bg-red-600 hover:bg-red-700 text-white"
+                  >
+                    Delete
+                  </Button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 
@@ -596,18 +590,7 @@ export default function WaterfallAnalysisNew() {
           </div>
 
           <div className="bg-white rounded-lg shadow-md p-6">
-            <div className="flex justify-between items-center mb-6 w-full">
-              <h2 className="text-2xl font-semibold text-gray-800">Transactions</h2>
-              <Button 
-                onClick={addTransaction}
-                className="bg-blue-600 hover:bg-blue-700 text-white whitespace-nowrap"
-              >
-                Add Transaction
-              </Button>
-            </div>
-            <div className="w-full">
-              {renderTransactionsTable()}
-            </div>
+            {renderTransactionsTable()}
           </div>
 
           <div className="bg-white rounded-lg shadow-md p-6">
